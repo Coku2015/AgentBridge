@@ -1,0 +1,142 @@
+{
+  "version": "2.1",
+  "description": "AgentBridge package-family matrix. VendorSupported rows mirror the current Veeam matrix; compatibility inference covers upstream-compatible derivatives and is never a Veeam support claim.",
+  "supportedArchitectures": ["x86_64", "ppc64le"],
+  "supportedPackageFormats": ["rpm", "deb"],
+  "rules": [
+    {
+      "id": "rhel7-x86_64",
+      "packageId": "rhel7-x86_64",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "x86_64",
+      "versionMajors": [7],
+      "minGlibc": "2.17",
+      "osIds": ["rhel"],
+      "notes": "RHEL 7.9 ELS package family; current Agent 13 repository contains the EL7 x86_64 set."
+    },
+    {
+      "id": "rhel8-x86_64",
+      "packageId": "rhel8-x86_64",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "x86_64",
+      "versionMajors": [8],
+      "minGlibc": "2.28",
+      "osIds": ["rhel", "rocky", "almalinux"],
+      "notes": "RHEL 8 family on the official Veeam support matrix."
+    },
+    {
+      "id": "rhel9-x86_64",
+      "packageId": "rhel9-x86_64",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "x86_64",
+      "versionMajors": [9],
+      "minGlibc": "2.34",
+      "osIds": ["rhel", "rocky", "almalinux"],
+      "notes": "RHEL 9 family on the official Veeam support matrix."
+    },
+    {
+      "id": "rhel10-x86_64",
+      "packageId": "rhel10-x86_64",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "x86_64",
+      "versionMajors": [10],
+      "minGlibc": "2.38",
+      "osIds": ["rhel", "rocky", "almalinux"],
+      "notes": "RHEL 10 family on the official Veeam support matrix."
+    },
+    {
+      "id": "oracle7-10-x86_64",
+      "packageId": "oracle-rhel-family-x86_64",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "x86_64",
+      "minGlibc": "2.17",
+      "osIds": ["ol", "oracle"],
+      "notes": "Oracle Linux uses the Oracle-specific veeamsnap/blksnap package path; kernel flavor still matters."
+    },
+    {
+      "id": "sles-x86_64",
+      "packageId": "sles-x86_64",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "x86_64",
+      "minGlibc": "2.17",
+      "osIds": ["sles", "sles_sap"],
+      "notes": "SLES package family on the official Veeam support matrix."
+    },
+    {
+      "id": "debian-x86_64",
+      "packageId": "debian-x86_64",
+      "level": "VendorSupported",
+      "packageFormat": "deb",
+      "architecture": "x86_64",
+      "minGlibc": "2.17",
+      "osIds": ["debian", "ubuntu"],
+      "notes": "Debian/Ubuntu package family on the official Veeam support matrix."
+    },
+    {
+      "id": "rhel8-ppc64le",
+      "packageId": "rhel8-ppc64le",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "ppc64le",
+      "versionMajors": [8],
+      "osIds": ["rhel"],
+      "notes": "Linux on Power; repository provides veeam-libs + veeam-nosnap only."
+    },
+    {
+      "id": "rhel9-ppc64le",
+      "packageId": "rhel9-ppc64le",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "ppc64le",
+      "versionMajors": [9],
+      "osIds": ["rhel"],
+      "notes": "Linux on Power; repository provides veeam-libs + veeam-nosnap only."
+    },
+    {
+      "id": "rhel10-ppc64le",
+      "packageId": "rhel10-ppc64le",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "ppc64le",
+      "versionMajors": [10],
+      "osIds": ["rhel"],
+      "notes": "Linux on Power; repository provides veeam-libs + veeam-nosnap only."
+    },
+    {
+      "id": "sles12-ppc64le",
+      "packageId": "sles12-ppc64le",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "ppc64le",
+      "versionMajors": [12],
+      "osIds": ["sles_sap"],
+      "notes": "SLES for SAP Power path; repository provides the nosnap package set."
+    },
+    {
+      "id": "sles15-ppc64le",
+      "packageId": "sles15-ppc64le",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "ppc64le",
+      "versionMajors": [15],
+      "osIds": ["sles", "sles_sap"],
+      "notes": "Linux on Power; repository provides veeam-libs + veeam-nosnap only."
+    },
+    {
+      "id": "sles16-ppc64le",
+      "packageId": "sles16-ppc64le",
+      "level": "VendorSupported",
+      "packageFormat": "rpm",
+      "architecture": "ppc64le",
+      "versionMajors": [16],
+      "osIds": ["sles", "sles_sap"],
+      "notes": "Linux on Power; repository provides veeam-libs + veeam-nosnap only."
+    }
+  ]
+}

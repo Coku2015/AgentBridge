@@ -1,0 +1,73 @@
+# ---- Go ----
+/bin/
+/build/
+/dist/
+/release/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# ---- Frontend (Node / Vite) ----
+web/node_modules/
+web/dist/
+node_modules/
+.vite/
+*.tsbuildinfo
+.eslintcache
+# Embed target: keep the dir (go:embed needs it), ignore built assets.
+internal/httpserver/web/dist/*
+!internal/httpserver/web/dist/.gitkeep
+
+# ---- Local development materials (not part of the public repository) ----
+/docs/
+/specs/
+/.claude/
+/.specify/
+/CLAUDE.md
+/PROJECT_REQUIREMENTS.md
+
+# ---- Tool and build caches ----
+.cache/
+.npm/
+.pnpm-store/
+.yarn/
+coverage/
+*.cache
+*.tmp
+*.temp
+
+# ---- AgentBridge runtime data (NEVER commit: may contain secrets) ----
+/data/
+/.data/
+*.log
+logs/
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+.fleet/
+.claude/settings.local.json
+.playwright-mcp/
+*.swp
+*.swo
+*~
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+/screenshots/
+
+# ---- Env / local secrets ----
+.env
+.env.local
+*.token
+*-token.txt
+*.pem
+*.key
+!**/testdata/**/*.pem
