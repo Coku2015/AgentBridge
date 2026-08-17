@@ -57,10 +57,14 @@ release: release-version-check web
 	cp $(OUTDIR)/agentbridge-darwin-amd64 $(RELEASEDIR)/staging/darwin-amd64/agentbridge
 	cp $(OUTDIR)/agentbridge-darwin-arm64 $(RELEASEDIR)/staging/darwin-arm64/agentbridge
 	cp $(OUTDIR)/agentbridge-windows-amd64.exe $(RELEASEDIR)/staging/windows-amd64/agentbridge.exe
-	tar -czf $(RELEASEDIR)/agentbridge-$(VERSION)-linux-amd64.tar.gz -C $(RELEASEDIR)/staging/linux-amd64 agentbridge
-	tar -czf $(RELEASEDIR)/agentbridge-$(VERSION)-darwin-amd64.tar.gz -C $(RELEASEDIR)/staging/darwin-amd64 agentbridge
-	tar -czf $(RELEASEDIR)/agentbridge-$(VERSION)-darwin-arm64.tar.gz -C $(RELEASEDIR)/staging/darwin-arm64 agentbridge
-	cd $(RELEASEDIR)/staging/windows-amd64 && zip -q ../../agentbridge-$(VERSION)-windows-amd64.zip agentbridge.exe
+	cp LICENSE $(RELEASEDIR)/staging/linux-amd64/
+	cp LICENSE $(RELEASEDIR)/staging/darwin-amd64/
+	cp LICENSE $(RELEASEDIR)/staging/darwin-arm64/
+	cp LICENSE $(RELEASEDIR)/staging/windows-amd64/
+	tar -czf $(RELEASEDIR)/agentbridge-$(VERSION)-linux-amd64.tar.gz -C $(RELEASEDIR)/staging/linux-amd64 agentbridge LICENSE
+	tar -czf $(RELEASEDIR)/agentbridge-$(VERSION)-darwin-amd64.tar.gz -C $(RELEASEDIR)/staging/darwin-amd64 agentbridge LICENSE
+	tar -czf $(RELEASEDIR)/agentbridge-$(VERSION)-darwin-arm64.tar.gz -C $(RELEASEDIR)/staging/darwin-arm64 agentbridge LICENSE
+	cd $(RELEASEDIR)/staging/windows-amd64 && zip -q ../../agentbridge-$(VERSION)-windows-amd64.zip agentbridge.exe LICENSE
 	rm -rf $(RELEASEDIR)/staging
 	cd $(RELEASEDIR) && shasum -a 256 agentbridge-$(VERSION)-*.tar.gz agentbridge-$(VERSION)-*.zip > checksums.txt
 

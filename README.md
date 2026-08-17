@@ -14,7 +14,7 @@
 
 ## What is AgentBridge?
 
-AgentBridge is a cross-platform bootstrap and enrollment tool for **Veeam Backup & Replication (VBR)**. Run one self-contained application directly on your Windows, Linux, or macOS management machine—no service installation or external runtime required.
+AgentBridge is an open-source, cross-platform bootstrap and enrollment tool for **Veeam Backup & Replication (VBR)**. Run one self-contained application directly on your Windows, Linux, or macOS management machine—no service installation or external runtime required.
 
 It helps backup teams bring **Windows and Linux hosts** into VBR safely: deploy the Veeam Deployment Kit where needed, optionally pre-install a matched Veeam Agent on Linux, then create a certificate-based Protection Group for VBR discovery and ongoing management.
 
@@ -102,3 +102,7 @@ You will need:
 ## Help and contributions
 
 Issues, use cases, and improvements are welcome through GitHub Issues. When reporting a problem, include redacted errors, endpoint platform, VBR version, and reproduction steps. Never include passwords, private keys, tokens, or Deployment Kit contents.
+
+## License
+
+Copyright (c) 2026 Arcami Cloud. AgentBridge is released under the [MIT License](LICENSE).
