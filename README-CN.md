@@ -22,22 +22,22 @@ AgentBridge 是一款面向 Veeam Backup & Replication（VBR）的跨平台首�
 
 ## 为什么使用 AgentBridge？
 
-| 原则 | 能力 | 说明 |
-|---|---|---|
-| portable | **在你的工作平台直接运行** | Windows、Linux、macOS 均可使用的独立应用；直接启动后在浏览器中完成管理流程。 |
-| bridge | **面向混合环境** | 在同一个流程中准备 Windows 与 Linux 主机，并将它们纳入同一个证书认证的 Protection Group。 |
-| shield | **凭据不落盘** | SSH、Windows 管理员与 VBR 登录凭据只用于当前操作，不保存为长期凭据。 |
-| check | **先验证，再纳管** | Linux 会先探测系统和匹配安装包；Windows 会预检 SMB、管理员共享与 Task Scheduler RPC。 |
-| package | **从你的 VBR 获取材料** | Deployment Kit 与 Linux Agent 载荷来自你自己的 VBR，而不是 AgentBridge 的公共软件仓库。 |
-| laptop | **两种部署方式** | 可由 AgentBridge 远程部署，也可生成短时手工安装命令，适用于权限受限的团队。 |
-| layers | **结果不混为一谈** | 本地安装完成、Protection Group 创建成功和 VBR 发现成功会分别显示，方便准确排障。 |
+| 能力 | 说明 |
+|---|---|
+| **跨平台运行** | Windows、Linux、macOS 均可使用；启动后在浏览器中完成全部操作。 |
+| **支持混合环境** | 在同一个流程中准备 Windows 与 Linux 主机，并将它们加入同一个证书认证的保护组。 |
+| **凭据不落盘** | SSH、Windows 管理员与 VBR 登录凭据只用于当前操作，不保存为长期凭据。 |
+| **部署前验证** | Linux 会探测系统并匹配安装包；Windows 会测试远程安装条件。 |
+| **组件来自 VBR** | Deployment Kit 与 Linux Agent 安装包均从用户自己的 VBR 获取。 |
+| **手工或自动安装** | 支持远程自动部署，也可生成一次性手工安装命令。 |
+| **清晰展示结果** | 本地安装、保护组创建和 VBR 发现结果分别展示，便于排查问题。 |
 
 ## 当前支持
 
 | 目标主机 | AgentBridge 执行的工作 | 方式 |
 |---|---|---|
-| Linux | 安装 Deployment Kit，或 Agent + Deployment Kit | SSH（root 或通过 sudo/su 自动提权）；手工拉取安装 |
-| Windows | 安装 **Deployment Kit** | SMB 3 + Task Scheduler RPC；短时手工拉取安装 |
+| Linux | 安装 Deployment Kit，或 Agent + Deployment Kit | SSH 远程安装；手工安装命令 |
+| Windows | 安装 **Deployment Kit** | 远程自动安装；手工安装命令 |
 
 Windows 上的 Veeam Agent 由 VBR 在 Protection Group 扫描后按 VBR 配置部署；AgentBridge 当前不直接为 Windows 选择或安装 Agent 包。
 
@@ -53,23 +53,21 @@ Windows 上的 Veeam Agent 由 VBR 在 Protection Group 扫描后按 VBR 配置�
 
 ## 三步上手
 
-1. 从本仓库的 **Releases** 下载适用于 Windows、Linux 或 macOS 管理终端的 AgentBridge 文件，然后直接无参数运行：
+1. 从 [Releases](https://github.com/Coku2015/AgentBridge/releases) 下载适用于当前管理终端的 AgentBridge，然后直接运行：
 
    ```bash
    agentbridge
    ```
 
-   AgentBridge 会在终端显示简洁的英文启动信息，包括产品名称、用途、浏览器访问地址和运行状态，并自动打开本机 Web 控制台。诊断日志继续写入 `data/logs/agentbridge.log`；如未自动打开，请复制终端显示的地址到浏览器。原 `agentbridge serve` 命令作为兼容入口继续保留。
+   AgentBridge 启动后会自动打开本机 Web 控制台。如浏览器没有自动打开，请访问终端中显示的地址。诊断日志保存在 `data/logs/agentbridge.log`。
 
 2. 在控制台中连接 VBR。AgentBridge 会在首次连接时固定服务器证书，然后生成或导入 Deployment Kit。
 
 3. 添加主机并完成部署：
 
-   - **Linux**：测试连接凭据；需要安装 Agent 时确认推荐配置，然后安装 Kit 或 Agent + Kit；
-   - **Windows**：执行远程预检并安装 Deployment Kit，或复制短时手工安装命令到目标机执行；
-   - 选择已就绪的主机，创建 certificate-based `Individual Computers` Protection Group，并等待 VBR Rescan。
-
-正式版本与下载文件由 [GitHub Release 工作流](.github/workflows/release.yml)生成。Git tag 就是二进制显示的版本号，例如 `v0.1.0` 标签会生成显示 `AgentBridge v0.1.0` 的正式版本。
+   - **Linux**：测试连接凭据；需要安装 Agent 时确认推荐配置，然后安装 Deployment Kit 或 Agent + Deployment Kit；
+   - **Windows**：测试管理员凭据并安装 Deployment Kit，或复制手工安装命令到目标机执行；
+   - 选择已就绪的主机，创建基于证书的 `Individual Computers` 类型保护组，并等待 VBR 完成扫描。
 
 ## 界面流程
 
@@ -98,7 +96,7 @@ Windows 上的 Veeam Agent 由 VBR 在 Protection Group 扫描后按 VBR 配置�
 
 - AgentBridge 不替代 VBR：不创建备份作业，不执行恢复，也不管理长期 Agent 生命周期。
 - 非官方支持的 Linux 发行版可能得到兼容性推荐，但这不等同于 Veeam 官方支持；请先在实验环境完成验证。
-- 新建 Deployment Kit campaign 可能使尚未配对的旧 Kit 临时证书失效。请在大批量部署前统一规划 campaign。
+- 重新生成 Deployment Kit 会使尚未使用的旧 Kit 失效。大批量部署前请统一准备安装文件。
 - Windows 与 Linux 的“本地安装成功”和“VBR 已发现”是两个独立结果；请以控制台的分层状态为准。
 
 ## 获取帮助与参与

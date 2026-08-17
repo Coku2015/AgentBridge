@@ -22,22 +22,22 @@ AgentBridge handles the first trusted connection. Backup policies, scheduled bac
 
 ## Why AgentBridge?
 
-| Principle | Capability | What it means |
-|---|---|---|
-| portable | **Run it where you work** | A self-contained application for Windows, Linux, and macOS. Start it directly and manage the workflow in your browser. |
-| bridge | **Mixed-host onboarding** | Prepare Windows and Linux hosts in one workflow, then enroll them in a shared certificate-based Protection Group. |
-| shield | **No stored privileged credentials** | SSH, Windows administrator, and VBR credentials are used only for the active operation—not kept as long-term records. |
-| check | **Validate before enrollment** | Linux hosts are probed and matched to the right payload; Windows hosts are preflighted for SMB, admin shares, and Task Scheduler RPC. |
-| package | **Use your own VBR as the source** | Deployment Kits and Linux Agent payloads come from your VBR—not from an AgentBridge package repository. |
-| laptop | **Remote or operator-led deployment** | Deploy remotely when access is approved, or generate a short-lived manual install command for restricted environments. |
-| layers | **Honest status, not one green light** | Local installation, Protection Group creation, and VBR discovery are reported as separate outcomes. |
+| Capability | What it means |
+|---|---|
+| **Cross-platform** | Run AgentBridge on Windows, Linux, or macOS and complete the workflow in a browser. |
+| **Mixed environments** | Prepare Windows and Linux hosts together and add them to one certificate-based Protection Group. |
+| **No stored credentials** | SSH, Windows administrator, and VBR credentials are used only for the active operation. |
+| **Pre-deployment checks** | AgentBridge probes Linux systems, matches packages, and tests Windows remote-install requirements. |
+| **Components from your VBR** | Deployment Kits and Linux Agent packages are obtained from the user's own VBR server. |
+| **Manual or automatic installation** | Deploy remotely or generate a one-time manual installation command. |
+| **Clear results** | Local installation, Protection Group creation, and VBR discovery are reported separately. |
 
 ## Supported today
 
 | Endpoint | What AgentBridge deploys | Methods |
 |---|---|---|
-| Linux | Deployment Kit, or Agent + Deployment Kit | SSH as root or with automatic sudo/su privilege elevation; manual pull install |
-| Windows | **Deployment Kit** | SMB 3 + Task Scheduler RPC; short-lived manual pull install |
+| Linux | Deployment Kit, or Agent + Deployment Kit | Remote SSH installation; manual installation command |
+| Windows | **Deployment Kit** | Remote installation; manual installation command |
 
 On Windows, VBR deploys the Veeam Agent according to the Protection Group configuration after the rescan. AgentBridge does not currently select or install Windows Agent packages directly.
 
@@ -53,25 +53,21 @@ You will need:
 
 ## Quick start
 
-1. Download the AgentBridge build for your Windows, Linux, or macOS management machine from **Releases**, then run it without arguments:
+1. Download AgentBridge for your management machine from [Releases](https://github.com/Coku2015/AgentBridge/releases), then run it:
 
    ```bash
    agentbridge
    ```
 
-   AgentBridge prints a concise English startup banner with its name, purpose, browser addresses and running state, then opens the local Web Console automatically. Diagnostic logs remain in `data/logs/agentbridge.log`. If the browser does not open, copy one of the displayed addresses into it. The former `agentbridge serve` command remains available as a compatibility alias.
+   AgentBridge opens the local Web Console automatically. If the browser does not open, visit the address shown in the terminal. Diagnostic logs are stored in `data/logs/agentbridge.log`.
 
 2. Connect to VBR in the console. AgentBridge pins the server certificate on first use, then generates or imports a Deployment Kit.
 
 3. Add hosts and deploy:
 
-   - **Linux** — test the credentials, confirm the recommended Agent profile when required, then install the Kit or Agent + Kit.
-   - **Windows** — run the remote preflight and install the Deployment Kit, or copy the short-lived manual-install command to an administrator session on the host.
+   - **Linux** — test the credentials, confirm the recommended Agent profile when required, then install the Deployment Kit or Agent + Deployment Kit.
+   - **Windows** — test the administrator credentials and install the Deployment Kit, or run the manual installation command on the host.
    - Select ready hosts, create a certificate-based `Individual Computers` Protection Group, and wait for the VBR rescan.
-
-Release tags and downloadable binaries are produced by the
-[GitHub Release workflow](.github/workflows/release.yml). The Git tag is the version shown by the
-binary; for example, tag `v0.1.0` produces `AgentBridge v0.1.0`.
 
 ## See the workflow
 
@@ -100,7 +96,7 @@ binary; for example, tag `v0.1.0` produces `AgentBridge v0.1.0`.
 
 - AgentBridge is not a replacement for VBR. It does not create backup jobs, run restores, or manage the Agent lifecycle over time.
 - A compatibility recommendation for an unsupported Linux distribution is not Veeam vendor support. Validate it in a lab first.
-- Creating a new Deployment Kit campaign can invalidate the temporary certificates in an older, unpaired Kit. Plan campaigns before a large rollout.
+- Generating a new Deployment Kit invalidates older Kits that have not been used. Prepare the installation files before a large rollout.
 - “Installed locally” and “discovered by VBR” are independent outcomes. Use the layered status in the console to diagnose the next action.
 
 ## Help and contributions
