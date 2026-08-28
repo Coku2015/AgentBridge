@@ -18,6 +18,7 @@ import { computed, ref } from 'vue'
 import Drawer from '../ui/Drawer.vue'
 import HourglassIndicator from '../ui/HourglassIndicator.vue'
 import { t } from '../i18n'
+import { formatAgentPackageDownloadError } from '../errorPresentation'
 import { toast } from '../ui/toast'
 import {
   captureFingerprint,
@@ -256,7 +257,7 @@ async function onDownloadSelected(): Promise<void> {
       t('connect.package.s.exported.from.vbr.and.cached', res.artifacts.length),
     )
   } catch (e) {
-    toast(t('connect.agent.package.download.failed'), (e as Error).message)
+    toast(t('connect.agent.package.download.failed'), formatAgentPackageDownloadError(e))
   } finally {
     packageBusy.value = false
   }

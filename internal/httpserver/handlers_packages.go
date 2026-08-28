@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -119,6 +120,21 @@ func registerPackages(mux *http.ServeMux, log *slog.Logger, dataDir string) {
 		defer cancel()
 		artifacts, err := packageStore.DownloadMany(downloadCtx, adapter, names)
 		if err != nil {
+			if errors.Is(err, packages.ErrInvalidVBRArchive) {
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":  "agent_package_archive_invalid",
+					"detail": "VBR returned an invalid Agent package archive.",
+				})
+				log.Error(
+					"agent package download failed",
+					"stage", "archive_decode",
+					"packages", names,
+					"error", err,
+					"technical_detail", packages.ArchiveDiagnostic(err),
+					"duration_ms", time.Since(started).Milliseconds(),
+				)
+				return
+			}
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "agent package download failed", "detail": err.Error()})
 			log.Error("agent package download failed", "stage", "vbr_export_or_artifact", "packages", names, "error", err, "duration_ms", time.Since(started).Milliseconds())
 			return

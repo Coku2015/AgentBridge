@@ -1041,7 +1041,13 @@ func (a *RESTAdapter) postBinary(ctx context.Context, path string, body any) (io
 		}
 		return nil, fmt.Errorf("vbr POST %s: %s", path, resp.Status)
 	}
-	a.logHTTPResponse(http.MethodPost, path, started, resp.StatusCode, fmt.Sprintf("stream content_type=%q content_length=%d", resp.Header.Get("Content-Type"), resp.ContentLength))
+	a.logHTTPResponse(http.MethodPost, path, started, resp.StatusCode, fmt.Sprintf(
+		"stream content_type=%q content_disposition=%q content_encoding=%q content_length=%d",
+		resp.Header.Get("Content-Type"),
+		resp.Header.Get("Content-Disposition"),
+		resp.Header.Get("Content-Encoding"),
+		resp.ContentLength,
+	))
 	return resp.Body, nil
 }
 

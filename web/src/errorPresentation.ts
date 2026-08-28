@@ -61,6 +61,15 @@ function installerOutput(source: unknown): string {
   return index >= 0 ? detail.slice(index + marker.length).trim() : ''
 }
 
+export function formatAgentPackageDownloadError(source: unknown): string {
+  const value = diagnostic(source)
+  if (value.error === 'agent_package_archive_invalid') {
+    return t('errorpresentation.vbr.returned.an.invalid.agent.package.archive')
+  }
+  if (source instanceof Error && source.message) return source.message
+  return value.detail || t('errorpresentation.agent.package.download.failed')
+}
+
 export function formatLinuxRemoteError(
   source: unknown,
   host: string,

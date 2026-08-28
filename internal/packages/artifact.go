@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,37 @@ const maxAgentPackageArchiveBytes = 1 << 30 // 1 GiB safety bound for VBR export
 // packageArchiveModTime preserves deterministic package-set archives while
 // avoiding GNU tar's warning for epoch-zero timestamps on older Linux hosts.
 var packageArchiveModTime = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// ErrInvalidVBRArchive identifies a successful VBR package response whose
+// bytes cannot be decoded as one of the documented archive formats. Keep this
+// stable so the HTTP layer can return a human-readable error while retaining
+// the detailed decoder diagnostics exclusively in the service log.
+var ErrInvalidVBRArchive = errors.New("VBR returned an invalid Agent package archive")
+
+type invalidVBRArchiveError struct {
+	size      int
+	signature string
+	attempts  []string
+}
+
+func (e *invalidVBRArchiveError) Error() string { return ErrInvalidVBRArchive.Error() }
+func (e *invalidVBRArchiveError) Unwrap() error { return ErrInvalidVBRArchive }
+
+// ArchiveDiagnostic returns safe format diagnostics for service logging. It
+// never includes package contents; only the byte count, a short hexadecimal
+// signature and decoder errors are exposed.
+func ArchiveDiagnostic(err error) string {
+	var archiveErr *invalidVBRArchiveError
+	if !errors.As(err, &archiveErr) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"received_bytes=%d signature=%s attempts=[%s]",
+		archiveErr.size,
+		archiveErr.signature,
+		strings.Join(archiveErr.attempts, "; "),
+	)
+}
 
 // PackageDownloader is the narrow VBR capability needed by the artifact
 // store. The REST implementation creates and removes the temporary package
@@ -113,7 +145,10 @@ func (s *ArtifactStore) DownloadMany(ctx context.Context, d PackageDownloader, p
 	for _, name := range names {
 		body, err := d.DownloadAgentPackages(ctx, vbr.PackageRequest{
 			PackageNames: []string{name},
-			Format:       "Tar",
+			// VBR supports both archive types. ZIP gives the package cache a
+			// central directory for complete-stream validation before extracting
+			// the RPM/DEB payloads.
+			Format: "Zip",
 		})
 		if err != nil {
 			for _, previous := range artifacts {
@@ -300,25 +335,56 @@ type packageEntry struct {
 }
 
 func packageEntries(raw []byte) ([]packageEntry, error) {
-	if entries, err := zipEntries(raw); err == nil {
+	entries, zipErr := zipEntries(raw)
+	if zipErr == nil {
 		return entries, nil
 	}
-	if entries, err := tarEntries(raw); err == nil {
+	entries, tarErr := tarEntries(raw)
+	if tarErr == nil {
 		return entries, nil
 	}
 	if len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
 		gz, err := gzip.NewReader(bytes.NewReader(raw))
 		if err != nil {
-			return nil, err
+			return nil, newInvalidVBRArchiveError(raw, zipErr, tarErr, fmt.Errorf("gzip: %w", err))
 		}
 		decompressed, readErr := io.ReadAll(io.LimitReader(gz, maxAgentPackageArchiveBytes+1))
 		_ = gz.Close()
 		if readErr != nil {
-			return nil, readErr
+			return nil, newInvalidVBRArchiveError(raw, zipErr, tarErr, fmt.Errorf("gzip read: %w", readErr))
 		}
-		return tarEntries(decompressed)
+		entries, gzipTarErr := tarEntries(decompressed)
+		if gzipTarErr == nil {
+			return entries, nil
+		}
+		return nil, newInvalidVBRArchiveError(raw, zipErr, tarErr, fmt.Errorf("gzip tar: %w", gzipTarErr))
 	}
-	return nil, fmt.Errorf("unsupported archive format (expected ZIP, TAR or TAR.GZ)")
+	return nil, newInvalidVBRArchiveError(raw, zipErr, tarErr)
+}
+
+func newInvalidVBRArchiveError(raw []byte, attempts ...error) error {
+	const signatureBytes = 16
+	prefix := raw
+	if len(prefix) > signatureBytes {
+		prefix = prefix[:signatureBytes]
+	}
+	details := make([]string, 0, len(attempts))
+	labels := []string{"zip", "tar", "gzip"}
+	for i, err := range attempts {
+		if err == nil {
+			continue
+		}
+		label := "decoder"
+		if i < len(labels) {
+			label = labels[i]
+		}
+		details = append(details, fmt.Sprintf("%s=%v", label, err))
+	}
+	return &invalidVBRArchiveError{
+		size:      len(raw),
+		signature: hex.EncodeToString(prefix),
+		attempts:  details,
+	}
 }
 
 func zipEntries(raw []byte) ([]packageEntry, error) {
@@ -390,12 +456,35 @@ func isAgentPackage(name string) bool {
 }
 
 func safeArchiveName(name string) (string, error) {
-	if name == "" || strings.ContainsAny(name, "\x00\\") || strings.HasPrefix(name, "/") {
+	if name == "" || strings.ContainsRune(name, '\x00') {
 		return "", fmt.Errorf("unsafe archive entry %q", name)
 	}
-	clean := path.Clean(name)
+
+	// Windows-based VBR servers write ZIP entry names with backslashes even
+	// though the ZIP specification uses forward slashes. Normalize the
+	// separators before validation, while still rejecting absolute Windows,
+	// UNC and traversal paths independently of the OS running AgentBridge.
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if strings.HasPrefix(normalized, "/") || hasWindowsDrivePrefix(normalized) {
+		return "", fmt.Errorf("unsafe archive entry %q", name)
+	}
+	for _, segment := range strings.Split(normalized, "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("unsafe archive entry %q", name)
+		}
+	}
+
+	clean := path.Clean(normalized)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
 		return "", fmt.Errorf("unsafe archive entry %q", name)
 	}
 	return clean, nil
+}
+
+func hasWindowsDrivePrefix(name string) bool {
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	letter := name[0]
+	return (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z')
 }

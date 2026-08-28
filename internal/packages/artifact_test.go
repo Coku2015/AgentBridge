@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,8 +85,69 @@ func TestArtifactStoreExtractsOnlyRPMFromZip(t *testing.T) {
 	if string(got) != "rpm-bytes" {
 		t.Fatalf("artifact bytes = %q", got)
 	}
-	if artifact.SHA256 == "" || d.request.Format != "Tar" || len(d.request.PackageNames) != 1 {
+	if artifact.SHA256 == "" || d.request.Format != "Zip" || len(d.request.PackageNames) != 1 {
 		t.Fatalf("request/artifact metadata = %+v / %+v", d.request, artifact)
+	}
+}
+
+func TestArtifactStoreReportsInvalidVBRArchiveWithoutLeakingTechnicalDetail(t *testing.T) {
+	store, err := NewArtifactStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Download(context.Background(), &fakePackageDownloader{archive: []byte("not-an-archive")}, "Red Hat 7 x64")
+	if !errors.Is(err, ErrInvalidVBRArchive) {
+		t.Fatalf("error = %v, want ErrInvalidVBRArchive", err)
+	}
+	if strings.Contains(err.Error(), "zip=") || strings.Contains(err.Error(), "tar=") {
+		t.Fatalf("public error leaked decoder details: %v", err)
+	}
+	diagnostic := ArchiveDiagnostic(err)
+	if !strings.Contains(diagnostic, "received_bytes=14") || !strings.Contains(diagnostic, "signature=6e6f742d616e2d61726368697665") || !strings.Contains(diagnostic, "zip=") || !strings.Contains(diagnostic, "tar=") {
+		t.Fatalf("diagnostic = %q", diagnostic)
+	}
+}
+
+func TestArtifactStoreAcceptsWindowsSeparatorsFromVBRZip(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(`Linux\Red Hat 7 x64 - 13.1.0.252\veeam-13.1.0.252-1.el7.x86_64.rpm`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("rpm-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewArtifactStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := store.Download(context.Background(), &fakePackageDownloader{archive: buf.Bytes()}, "Red Hat 7 x64 - 13.1.0.252")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.FileName != "veeam-13.1.0.252-1.el7.x86_64.rpm" || artifact.Format != "rpm" {
+		t.Fatalf("artifact = %+v", artifact)
+	}
+}
+
+func TestSafeArchiveNameRejectsWindowsTraversalAndAbsolutePaths(t *testing.T) {
+	for _, name := range []string{
+		`..\evil.rpm`,
+		`Linux\..\evil.rpm`,
+		`C:\Windows\Temp\evil.rpm`,
+		`\\server\share\evil.rpm`,
+		`/absolute/evil.rpm`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := safeArchiveName(name); err == nil {
+				t.Fatalf("safeArchiveName(%q) unexpectedly succeeded", name)
+			}
+		})
 	}
 }
 

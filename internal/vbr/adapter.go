@@ -92,7 +92,7 @@ type AgentPackage struct {
 // PackageRequest selects the Linux packages VBR should export through a
 // temporary PreInstalledAgents protection group. PackageNames must match the
 // packageName values returned by ListLinuxAgentPackages. Format is "Tar" or
-// "Zip"; Tar is the default used by AgentBridge for Linux packages.
+// "Zip"; AgentBridge requests Zip for consistent decoding across VBR builds.
 type PackageRequest struct {
 	PackageNames []string
 	Format       string

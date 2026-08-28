@@ -100,6 +100,8 @@ export const messages: Record<string, Bi> = {
   "errorpresentation.the.deployment.kit.changed.generate.a.new": {"zh":"Deployment Kit 已更新，请重新生成安装命令。","en":"The Deployment Kit changed; generate a new install command."},
   "errorpresentation.the.readiness.probe.request.is.invalid": {"zh":"探测请求无效。","en":"The readiness probe request is invalid."},
   "errorpresentation.the.deployment.kit.service.is.unavailable": {"zh":"Deployment Kit 服务不可达。","en":"The Deployment Kit service is unavailable."},
+  "errorpresentation.vbr.returned.an.invalid.agent.package.archive": {"zh":"VBR 返回的 Agent 安装包格式无效，无法读取。","en":"VBR returned an invalid Agent package archive."},
+  "errorpresentation.agent.package.download.failed": {"zh":"无法从 VBR 获取 Agent 安装包。","en":"Unable to retrieve the Agent package from VBR."},
   "connect.connected.to.vbr": {"zh":"已连接 VBR","en":"Connected to VBR"},
   "connect.credentials.were.used.for.this.session.only": {"zh":"凭据仅用于本次会话。","en":"Credentials were used for this session only."},
   "connect.cannot.create.deployment.kit": {"zh":"无法创建 Deployment Kit","en":"Cannot create Deployment Kit"},

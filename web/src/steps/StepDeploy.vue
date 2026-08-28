@@ -16,7 +16,7 @@ import CustomSelect from '../ui/CustomSelect.vue'
 import Drawer from '../ui/Drawer.vue'
 import HourglassIndicator from '../ui/HourglassIndicator.vue'
 import { t } from '../i18n'
-import { formatDeploymentKitProbeError, formatLinuxRemoteError, formatWindowsRemoteError } from '../errorPresentation'
+import { formatAgentPackageDownloadError, formatDeploymentKitProbeError, formatLinuxRemoteError, formatWindowsRemoteError } from '../errorPresentation'
 import { toast } from '../ui/toast'
 import {
   captureHostKey,
@@ -621,7 +621,7 @@ async function downloadSelectedCandidatePackages(): Promise<void> {
       t('deploy.package.s.exported.from.vbr.and.cached.2', result.artifacts.length),
     )
   } catch (e) {
-    toast(t('deploy.agent.package.download.failed.2'), (e as Error).message)
+    toast(t('deploy.agent.package.download.failed.2'), formatAgentPackageDownloadError(e))
   } finally {
     cachePackageBusy.value = false
   }
