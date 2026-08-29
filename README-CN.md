@@ -26,7 +26,7 @@ AgentBridge 是一款面向 Veeam Backup & Replication（VBR）的开源、跨�
 |---|---|
 | **跨平台运行** | Windows、Linux、macOS 均可使用；启动后在浏览器中完成全部操作。 |
 | **支持混合环境** | 在同一个流程中准备 Windows 与 Linux 主机，并将它们加入同一个证书认证的保护组。 |
-| **凭据不落盘** | SSH、Windows 管理员与 VBR 登录凭据只用于当前操作，不保存为长期凭据。 |
+| **凭据不落盘** | SSH 与 Windows 管理员凭据仅在当前浏览器会话内用于验证、部署和重试，绝不写入磁盘。 |
 | **部署前验证** | Linux 会探测系统并匹配安装包；Windows 会测试远程安装条件。 |
 | **组件来自 VBR** | Deployment Kit 与 Linux Agent 安装包均从用户自己的 VBR 获取。 |
 | **手工或自动安装** | 支持远程自动部署，也可生成一次性手工安装命令。 |

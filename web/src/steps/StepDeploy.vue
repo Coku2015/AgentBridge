@@ -6,8 +6,8 @@
 // install card. Security invariants carried over from the old cards:
 //   - SSH host key is auto-TOFU: captured without trust, pinned on first
 //     use, no confirmation prompt; a later change blocks.
-//   - All SSH secrets live in component memory only and are cleared the
-//     moment the install request returns (red line 1).
+//   - All SSH secrets live in component memory only. They remain available
+//     for retries during this browser session and are never persisted.
 //   - Install result layers are honest: the component column says what was
 //     installed (Kit vs full Agent) — the status cell is a badge only,
 //     with no inline prose.
@@ -90,6 +90,60 @@ const addingPlatform = ref<'windows' | 'linux'>('linux')
 const addMode = ref(false)
 const cacheSessionArtifacts = ref<AgentArtifact[]>([])
 
+type HostGuideStep = 'method' | 'actions' | null
+const HOST_GUIDE_DISMISSED_KEY = 'agentbridge.host-setup-guide.dismissed'
+const hostGuideStep = ref<HostGuideStep>(null)
+const hostGuideHost = ref('')
+const hostGuideAutoSkipped = ref(false)
+
+function rememberHostGuideDismissed(): void {
+  hostGuideAutoSkipped.value = true
+  try {
+    localStorage.setItem(HOST_GUIDE_DISMISSED_KEY, '1')
+  } catch {
+    // A blocked storage API must not prevent the user from dismissing the guide.
+  }
+}
+
+function closeHostGuide(remember: boolean): void {
+  hostGuideStep.value = null
+  hostGuideHost.value = ''
+  if (remember) rememberHostGuideDismissed()
+}
+
+function skipAllHostGuide(): void {
+  closeHostGuide(true)
+}
+
+function completeHostGuide(): void {
+  closeHostGuide(true)
+}
+
+function startHostGuide(row: HostRow): void {
+  openMenu.value = null
+  hostGuideHost.value = row.host
+  hostGuideStep.value = 'method'
+}
+
+function advanceHostGuide(row: HostRow): void {
+  if (hostGuideHost.value === row.host && hostGuideStep.value === 'method') {
+    hostGuideStep.value = 'actions'
+  }
+}
+
+function openGuidedActionMenu(row: HostRow): void {
+  openMenu.value = row.host
+  completeHostGuide()
+}
+
+function toggleActionMenu(row: HostRow): void {
+  const opening = openMenu.value !== row.host
+  openMenu.value = opening ? row.host : null
+  if (opening && hostGuideHost.value === row.host && hostGuideStep.value === 'actions') {
+    completeHostGuide()
+  }
+}
+
 function closeActionMenuOnPointerDown(event: PointerEvent): void {
   if (!openMenu.value) return
   const target = event.target
@@ -107,11 +161,17 @@ function closeActionMenuOnKeydown(event: KeyboardEvent): void {
 onMounted(() => {
   document.addEventListener('pointerdown', closeActionMenuOnPointerDown)
   document.addEventListener('keydown', closeActionMenuOnKeydown)
+  try {
+    hostGuideAutoSkipped.value = localStorage.getItem(HOST_GUIDE_DISMISSED_KEY) === '1'
+  } catch {
+    hostGuideAutoSkipped.value = false
+  }
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', closeActionMenuOnPointerDown)
   document.removeEventListener('keydown', closeActionMenuOnKeydown)
+  secrets.clear()
 })
 
 const availableAgentPackages = computed(() => {
@@ -271,15 +331,19 @@ function addHost(): void {
     installMode: 'manual',
     manualProfile: 'kit-only',
   })
+  const addedRow = hosts[hosts.length - 1]
   addingHost.value = ''
   addingPlatform.value = 'linux'
   addMode.value = false
+  if (!hostGuideAutoSkipped.value && !hostGuideStep.value) startHostGuide(addedRow)
   toast(t('deploy.host.added'), ip + t('deploy.added.to.the.deployment.list'))
 }
 
 function deleteHost(row: HostRow): void {
   const i = hosts.indexOf(row)
   if (i >= 0) hosts.splice(i, 1)
+  if (hostGuideHost.value === row.host) closeHostGuide(false)
+  secrets.delete(row.host)
   emit('host-state', row.host, row.platform, row.component, row.installMode === 'manual' ? 'manual' : 'remote', false, '')
   toast(t('deploy.host.removed'), row.host + t('deploy.removed.from.the.deployment.list'))
 }
@@ -393,11 +457,17 @@ function openFailureDrawer(row: HostRow): void {
   drawerOpen.value = true
 }
 
-// Retry from the failure drawer reuses the push flow — idempotent by design
-// (same-version installs are tolerated server-side, red line 6).
+// Retry reuses the saved in-memory credential. If the browser session no
+// longer has that secret, return to the credential drawer without replacing
+// the original installation failure with a secondary credential error.
 async function retryFailed(): Promise<void> {
   const row = current.value
   if (!row) return
+  if (!hasSavedSecret(row)) {
+    openDrawer(row, 'credential')
+    toast(t('deploy.connection.credentials.required'), t('deploy.reenter.and.test.credentials.before.retrying'))
+    return
+  }
   closeDrawer()
   await pushHost(row)
 }
@@ -893,8 +963,8 @@ async function saveCredential(): Promise<void> {
     row.manualArtifact = undefined
     row.status = 'cred-ready'
     row.detail = ''
-    // Stash the secret for the upcoming install call only — cleared the moment
-    // that call returns (see runInstall).
+    // Keep the secret in browser memory for this host so a failed installation
+    // can be retried without forcing the operator to re-enter credentials.
     secrets.set(row.host, {
       password: authTab.value === 'password' ? sshPassword.value : undefined,
       key: authTab.value === 'key' ? sshKeyText.value : undefined,
@@ -1079,7 +1149,10 @@ function confirmComponent(): void {
 }
 
 function setInstallMode(row: HostRow, mode: InstallMode): void {
-  if (row.installMode === mode) return
+  if (row.installMode === mode) {
+    advanceHostGuide(row)
+    return
+  }
   row.installMode = mode
   row.deploymentKitProbe = undefined
   row.manualCommand = undefined
@@ -1106,6 +1179,7 @@ function setInstallMode(row: HostRow, mode: InstallMode): void {
     row.status = secrets.has(row.host) ? 'cred-ready' : 'pending'
   }
   emit('host-state', row.host, row.platform, row.component, mode === 'manual' ? 'manual' : 'remote', false, '')
+  advanceHostGuide(row)
 }
 
 function manualProbeMessage(result: DeploymentKitProbeResult): string {
@@ -1163,6 +1237,11 @@ async function pushHost(row: HostRow): Promise<void> {
       return
     }
     await runWindowsInstall(row)
+    return
+  }
+  if (!hasSavedSecret(row)) {
+    openDrawer(row, 'credential')
+    toast(t('deploy.connection.credentials.required'), t('deploy.reenter.and.test.credentials.before.retrying'))
     return
   }
   const wantsAgent = row.component === 'agent-plus-kit'
@@ -1223,8 +1302,6 @@ async function runWindowsInstall(row: HostRow): Promise<void> {
     row.status = 'failed'
     row.detail = formatWindowsRemoteError(e, row.host)
     toast(t('deploy.windows.remote.install.failed.2'), row.detail)
-  } finally {
-    secrets.delete(row.host)
   }
 }
 
@@ -1270,13 +1347,13 @@ async function runInstall(row: HostRow): Promise<void> {
     row.status = 'failed'
     row.detail = formatLinuxRemoteError(e, row.host, row.port, row.auth, 'install')
     toast(t('deploy.deployment.failed.2'), row.detail)
-  } finally {
-    secrets.delete(row.host) // memory-only: dropped with the request
   }
 }
 
-// Per-host secrets: kept only between "save credential" and the install call,
-// then dropped. They never leave this component and are never persisted.
+// Per-host secrets remain only in this component's memory for the current
+// browser session so retries can reuse them. They are deleted when the host is
+// removed, switched to manual mode, or the component is unmounted; they are
+// never persisted by AgentBridge.
 interface HostSecret {
   password?: string
   key?: string
@@ -1304,7 +1381,12 @@ function privilegeFor(row: HostRow): 'root' | 'sudo' {
 }
 
 function hasSavedSecret(row: HostRow): boolean {
-  return secrets.has(row.host)
+  const secret = secrets.get(row.host)
+  if (!secret) return false
+  if (row.platform === 'windows') return !!secret.windows && !!secret.password
+  if (row.auth === 'password') return !!secret.password
+  if (row.auth === 'key') return !!secret.key
+  return false
 }
 
 function deploymentProfileFor(component: HostRow['component']): DeploymentProfile | '' {
@@ -1389,6 +1471,10 @@ async function copyHostManualCommand(): Promise<void> {
         <div class="step-summary">{{ hosts.length }} {{ t('deploy.hosts') }} · {{ readyCount }} {{ t('deploy.ready') }}</div>
       </div>
       <div class="row">
+        <button v-if="hosts.length && !addMode" class="btn small host-guide-replay" @click="startHostGuide(hosts[0])">
+          <span class="host-guide-help" aria-hidden="true">?</span>
+          {{ t('deploy.operation.guide') }}
+        </button>
         <div v-if="addMode" class="row">
           <input v-model="addingHost" class="fieldbox mono" type="text" style="width:190px" :placeholder="t('deploy.ip.or.hostname')" @keyup.enter="addHost" />
           <CustomSelect
@@ -1434,10 +1520,19 @@ async function copyHostManualCommand(): Promise<void> {
           <tr>
             <td class="host">{{ row.host }}<span v-if="row.platform === 'linux' && row.port !== 22">:{{ row.port }}</span></td>
             <td class="os-cell"><span class="badge">{{ row.platform === 'windows' ? 'Windows · SMB/RPC' : 'Linux · SSH' }}</span></td>
-            <td>
-              <div class="install-mode-inline" role="group" :aria-label="t('deploy.install.method.2', row.host)">
+            <td class="mode-cell">
+              <div class="install-mode-inline" :class="{ 'guide-target': hostGuideHost === row.host && hostGuideStep === 'method' }" role="group" :aria-label="t('deploy.install.method.2', row.host)">
                 <button type="button" class="mode-chip manual" :class="{ active: row.installMode === 'manual' }" :title="t('deploy.m.manual.install')" :aria-label="t('deploy.switch.to.manual.install')" :aria-pressed="row.installMode === 'manual'" @click="setInstallMode(row, 'manual')">M</button>
                 <button type="button" class="mode-chip automatic" :class="{ active: row.installMode === 'automatic' }" :title="t('deploy.a.automatic.install')" :aria-label="t('deploy.switch.to.automatic.install')" :aria-pressed="row.installMode === 'automatic'" @click="setInstallMode(row, 'automatic')">A</button>
+              </div>
+              <div v-if="hostGuideHost === row.host && hostGuideStep === 'method'" class="host-guide-popover host-guide-method" role="dialog" :aria-label="t('deploy.install.method.guide')">
+                <span class="host-guide-eyebrow">{{ t('deploy.step.1.of.2') }}</span>
+                <strong>{{ t('deploy.confirm.the.install.method') }}</strong>
+                <p>{{ t('deploy.m.is.manual.install.a.is.automatic') }}</p>
+                <div class="host-guide-actions">
+                  <button class="btn" @click="skipAllHostGuide">{{ t('deploy.skip.all.guide.steps') }}</button>
+                  <button class="btn primary" @click="advanceHostGuide(row)">{{ t('deploy.next.guide.step') }}</button>
+                </div>
               </div>
             </td>
             <td class="component-cell" :title="componentLabel(row.component)">{{ componentLabel(row.component) }}</td>
@@ -1463,9 +1558,18 @@ async function copyHostManualCommand(): Promise<void> {
               </button>
             </td>
             <td class="action-cell" :class="{ open: openMenu === row.host, 'menu-up': hosts[hosts.length - 1] === row }">
-              <button class="btn small action-trigger" :aria-expanded="openMenu === row.host" aria-haspopup="menu" @click.stop="openMenu = openMenu === row.host ? null : row.host">
+              <button class="btn small action-trigger" :class="{ 'guide-target': hostGuideHost === row.host && hostGuideStep === 'actions' }" :aria-expanded="openMenu === row.host" aria-haspopup="menu" @click.stop="toggleActionMenu(row)">
                 <svg width="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
               </button>
+              <div v-if="hostGuideHost === row.host && hostGuideStep === 'actions'" class="host-guide-popover host-guide-actions-menu" role="dialog" :aria-label="t('deploy.actions.guide')">
+                <span class="host-guide-eyebrow">{{ t('deploy.step.2.of.2') }}</span>
+                <strong>{{ t('deploy.continue.from.the.actions.menu') }}</strong>
+                <p>{{ row.installMode === 'manual' ? t('deploy.manual.action.guide') : t('deploy.automatic.action.guide') }}</p>
+                <div class="host-guide-actions">
+                  <button class="btn" @click="skipAllHostGuide">{{ t('deploy.skip.all.guide.steps') }}</button>
+                  <button class="btn primary" @click="openGuidedActionMenu(row)">{{ t('deploy.open.actions.menu') }}</button>
+                </div>
+              </div>
               <div class="action-menu" role="menu" :aria-label="t('deploy.actions.2', row.host)">
                 <template v-if="row.installMode === 'manual'">
                   <button class="menu-action" role="menuitem" @click="openMenu = null; openDrawer(row, 'component')">{{ t('deploy.generate.installation.command.2') }}</button>
@@ -1761,7 +1865,7 @@ async function copyHostManualCommand(): Promise<void> {
       </button>
       <button v-if="drawerMode === 'component'" class="btn primary" :disabled="current?.installMode === 'manual' ? !manualSelectionValid : !componentSelectionValid" @click="confirmComponent">{{ current?.installMode === 'manual' ? t('deploy.save.configuration') : t('deploy.confirm.selection') }}</button>
       <button v-if="drawerMode === 'failure' && current?.installMode === 'automatic'" class="btn primary" :disabled="!current?.user || !current?.component || current?.status === 'pushing'" @click="retryFailed">
-        {{ t('deploy.retry.install') }}
+        {{ current && hasSavedSecret(current) ? t('deploy.retry.install') : t('deploy.reenter.credentials') }}
       </button>
     </template>
   </Drawer>

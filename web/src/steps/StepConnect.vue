@@ -18,7 +18,7 @@ import { computed, ref } from 'vue'
 import Drawer from '../ui/Drawer.vue'
 import HourglassIndicator from '../ui/HourglassIndicator.vue'
 import { t } from '../i18n'
-import { formatAgentPackageDownloadError } from '../errorPresentation'
+import { formatAgentPackageDownloadError, formatVBRConnectionError } from '../errorPresentation'
 import { toast } from '../ui/toast'
 import {
   captureFingerprint,
@@ -58,7 +58,15 @@ const password = ref('')
 // chain, no intermediate clicks).
 const phase = ref<'idle' | 'capturing' | 'connecting' | 'fetching'>('idle')
 const fingerprint = ref('')
-const errorMsg = ref('')
+const connectionFailure = ref<{ source: unknown; host: string; port: number } | null>(null)
+const errorMsg = computed(() => {
+  const failure = connectionFailure.value
+  return failure ? formatVBRConnectionError(failure.source, failure.host, failure.port) : ''
+})
+
+function clearConnectionError(): void {
+  if (phase.value === 'idle') connectionFailure.value = null
+}
 
 // The connect button is enabled once the form can produce a connection, or
 // immediately when already connected (it then only tops up missing
@@ -97,7 +105,7 @@ async function onPrimaryAction(): Promise<void> {
     }
     return
   }
-  errorMsg.value = ''
+  connectionFailure.value = null
   phase.value = 'capturing'
   try {
     // TOFU without interruption: capture without trusting, pin on first
@@ -125,7 +133,7 @@ async function onPrimaryAction(): Promise<void> {
     toast(t('connect.connected.to.vbr'), t('connect.credentials.were.used.for.this.session.only'))
   } catch (e) {
     password.value = ''
-    errorMsg.value = (e as Error).message
+    connectionFailure.value = { source: e, host: server.value.trim(), port: VBR_PORT }
   } finally {
     phase.value = 'idle'
   }
@@ -299,16 +307,16 @@ function fmtServerTime(iso?: string): string {
       <h3>{{ t('connect.connect.to.vbr.2') }}</h3>
       <div class="field">
         <label>{{ t('connect.vbr.server') }}</label>
-        <input v-model.trim="server" class="fieldbox mono" type="text" :disabled="connected || phase !== 'idle'" :placeholder="t('connect.e.g.vbr.company.internal')" />
+        <input v-model.trim="server" class="fieldbox mono" type="text" :disabled="connected || phase !== 'idle'" :placeholder="t('connect.e.g.vbr.company.internal')" :aria-invalid="!!errorMsg" :aria-describedby="errorMsg ? 'vbr-connection-error' : undefined" @input="clearConnectionError" />
       </div>
       <div v-if="!connected" class="grid-2">
         <div class="field">
           <label>{{ t('connect.username') }} <span>{{ t('connect.required') }}</span></label>
-          <input v-model.trim="username" class="fieldbox" type="text" :disabled="phase !== 'idle'" :placeholder="t('connect.e.g.administrator')" />
+          <input v-model.trim="username" class="fieldbox" type="text" :disabled="phase !== 'idle'" :placeholder="t('connect.e.g.administrator')" :aria-describedby="errorMsg ? 'vbr-connection-error' : undefined" @input="clearConnectionError" />
         </div>
         <div class="field">
           <label>{{ t('connect.password') }} <span>{{ t('connect.this.connection.only') }}</span></label>
-          <input v-model="password" class="fieldbox" type="password" :disabled="phase !== 'idle'" :placeholder="t('connect.vbr.password')" @keyup.enter="onPrimaryAction" />
+          <input v-model="password" class="fieldbox" type="password" :disabled="phase !== 'idle'" :placeholder="t('connect.vbr.password')" :aria-describedby="errorMsg ? 'vbr-connection-error' : undefined" @input="clearConnectionError" @keyup.enter="onPrimaryAction" />
         </div>
       </div>
       <div v-if="connected && info" class="connection">
@@ -322,7 +330,17 @@ function fmtServerTime(iso?: string): string {
           <span class="connection-meta">{{ t('connect.server.time') }} {{ fmtServerTime(info.serverTime) }}</span>
         </div>
       </div>
-      <p v-if="errorMsg" class="error-text">{{ errorMsg }}</p>
+      <div v-if="errorMsg" id="vbr-connection-error" class="connection-error" role="alert" aria-live="assertive">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v6" />
+          <path d="M12 17h.01" />
+        </svg>
+        <div>
+          <strong>{{ t('connect.vbr.connection.failed') }}</strong>
+          <p>{{ errorMsg }}</p>
+        </div>
+      </div>
     </div>
 
     <div class="panel">

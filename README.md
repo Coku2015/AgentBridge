@@ -26,7 +26,7 @@ AgentBridge handles the first trusted connection. Backup policies, scheduled bac
 |---|---|
 | **Cross-platform** | Run AgentBridge on Windows, Linux, or macOS and complete the workflow in a browser. |
 | **Mixed environments** | Prepare Windows and Linux hosts together and add them to one certificate-based Protection Group. |
-| **No stored credentials** | SSH, Windows administrator, and VBR credentials are used only for the active operation. |
+| **No stored credentials** | SSH and Windows credentials stay only in the active browser session for testing, deployment, and retries; credentials are never written to disk. |
 | **Pre-deployment checks** | AgentBridge probes Linux systems, matches packages, and tests Windows remote-install requirements. |
 | **Components from your VBR** | Deployment Kits and Linux Agent packages are obtained from the user's own VBR server. |
 | **Manual or automatic installation** | Deploy remotely or generate a one-time manual installation command. |

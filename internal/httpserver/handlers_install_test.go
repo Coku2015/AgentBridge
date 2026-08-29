@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	crand "crypto/rand"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,5 +130,25 @@ func TestSSHCredentialTypesKeepPasswordsSeparate(t *testing.T) {
 	}
 	if !bytes.Equal(keyAuth.PrivateKeyPEM, key) || keyAuth.Passphrase != "key-passphrase" {
 		t.Fatalf("private-key credential mapped incorrectly: %+v", keyAuth)
+	}
+}
+
+func TestLinuxInstallStageFailureLogsRealCause(t *testing.T) {
+	var logBuffer bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuffer, nil))
+	logLinuxInstallStageFailure(logger, "install", "172.30.0.2", 22, errors.New("rpm transaction failed: dependency missing"))
+
+	logged := logBuffer.String()
+	for _, expected := range []string{
+		`"msg":"linux remote installation failed"`,
+		`"stage":"install"`,
+		`"host":"172.30.0.2"`,
+		`"port":22`,
+		`"error":"install_failed"`,
+		`"technical_detail":"rpm transaction failed: dependency missing"`,
+	} {
+		if !strings.Contains(logged, expected) {
+			t.Fatalf("log %q does not contain %q", logged, expected)
+		}
 	}
 }

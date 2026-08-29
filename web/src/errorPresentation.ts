@@ -54,6 +54,62 @@ function isAuthenticationFailure(text: string): boolean {
   return /authentication_failed|windows_authentication_failed|kerberos_realm_missing|unable to authenticate|no supported methods|logon failure|username or password|用户名或密码/.test(text)
 }
 
+function networkTarget(host: string, port: number): string {
+  const value = host.trim()
+  const formattedHost = value.includes(':') && !value.startsWith('[') ? `[${value}]` : value
+  return `${formattedHost}:${port}`
+}
+
+// VBR discovery spans DNS, TCP, TLS, OAuth, and two REST compatibility probes.
+// Present those failures as operator actions rather than leaking Go/network API
+// error chains. Text matching remains as a compatibility fallback for older
+// AgentBridge servers that returned only a raw detail string.
+export function formatVBRConnectionError(source: unknown, host: string, port: number): string {
+  const text = diagnosticText(source)
+  const target = networkTarget(host, port)
+
+  if (/vbr_host_not_found|no such host|host not found|name resolution|server misbehaving/.test(text)) {
+    return t('errorpresentation.vbr.host.could.not.be.resolved', target)
+  }
+  if (/vbr_connection_timeout|i\/o timeout|deadline exceeded|client\.timeout exceeded|timeout awaiting response headers/.test(text)) {
+    return t('errorpresentation.vbr.connection.timed.out', target, port)
+  }
+  if (/vbr_connection_refused|connection refused/.test(text)) {
+    return t('errorpresentation.vbr.connection.was.refused', target, port)
+  }
+  if (/vbr_network_unreachable|no route to host|network is unreachable|host is down|network unreachable/.test(text)) {
+    return t('errorpresentation.vbr.network.is.unreachable', target)
+  }
+  if (/vbr_tls_fingerprint_changed|fingerprint (?:does not match|mismatch)/.test(text)) {
+    return t('errorpresentation.vbr.tls.certificate.changed', target)
+  }
+  if (/vbr_tls_handshake_failed|server presented no certificate|tls handshake|first record does not look like a tls handshake|server gave http response to https client|remote error: tls|protocol version|x509:|connection reset by peer|unexpected eof/.test(text)) {
+    return t('errorpresentation.vbr.tls.connection.failed', target, port)
+  }
+  if (/vbr_authentication_failed|invalid_grant|invalid credentials|authentication failed|username or password|oauth2 token grant returned (?:400|401)/.test(text)) {
+    return t('errorpresentation.vbr.authentication.failed')
+  }
+  if (/vbr_access_forbidden|oauth2 token grant returned 403|403 forbidden|access denied/.test(text)) {
+    return t('errorpresentation.vbr.access.was.denied')
+  }
+  if (/vbr_api_not_found|oauth2 token grant returned 404|404 not found/.test(text)) {
+    return t('errorpresentation.vbr.rest.api.was.not.found', target, port)
+  }
+  if (/vbr_service_unavailable|oauth2 token grant returned (?:429|500|502|503|504)|service unavailable|too many requests/.test(text)) {
+    return t('errorpresentation.vbr.rest.api.is.unavailable', target)
+  }
+  if (/vbr_response_invalid|decode token|empty access token|invalid character|unexpected end of json input/.test(text)) {
+    return t('errorpresentation.vbr.response.was.invalid', target)
+  }
+  if (/vbr_server_info_unavailable|server info failed/.test(text)) {
+    return t('errorpresentation.vbr.server.information.is.unavailable')
+  }
+  if (/vbr_capability_probe_failed|capability probe failed/.test(text)) {
+    return t('errorpresentation.vbr.capability.probe.failed')
+  }
+  return t('errorpresentation.vbr.connection.failed', target, port)
+}
+
 function installerOutput(source: unknown): string {
   const detail = diagnostic(source).detail || ''
   const marker = '; output: '

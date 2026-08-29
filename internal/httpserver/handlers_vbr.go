@@ -44,7 +44,7 @@ func registerVBR(mux *http.ServeMux, log *slog.Logger, scrubber *security.Scrubb
 		a := vbr.NewRESTAdapter(vbr.Credentials{}, scrubber, log)
 		fp, err := a.CaptureFingerprint(r.Context(), body.Server, body.Port)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "capture failed", "detail": err.Error()})
+			writeVBRConnectionFailure(w, log, "capture", body.Server, body.Port, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"fingerprint": fp})
@@ -76,17 +76,17 @@ func registerVBR(mux *http.ServeMux, log *slog.Logger, scrubber *security.Scrubb
 			PinnedTLSSHA256: body.Fingerprint,
 		}
 		if err := adapter.Connect(r.Context(), cfg); err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "connect failed", "detail": err.Error()})
+			writeVBRConnectionFailure(w, log, "connect", body.Server, body.Port, err)
 			return
 		}
 		info, err := adapter.ServerInfo(r.Context())
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "server info failed", "detail": err.Error()})
+			writeVBRConnectionFailure(w, log, "server_info", body.Server, body.Port, err)
 			return
 		}
 		caps, err := adapter.Capabilities(r.Context())
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "capability probe failed", "detail": err.Error()})
+			writeVBRConnectionFailure(w, log, "capabilities", body.Server, body.Port, err)
 			return
 		}
 		activeVBR.mu.Lock()

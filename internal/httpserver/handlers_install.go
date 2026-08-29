@@ -315,6 +315,7 @@ func registerInstall(mux *http.ServeMux, log *slog.Logger, dataDir string) {
 		defer ex.ClearSecrets()
 		prep, err := ex.Prepare(ctx, executor.InstallPlan{KitPath: body.KitPath, DeploymentProfile: body.DeploymentProfile})
 		if err != nil {
+			logLinuxInstallStageFailure(log, "prepare", body.Host, body.Port, err)
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "prepare failed", "detail": err.Error()})
 			return
 		}
@@ -330,11 +331,13 @@ func registerInstall(mux *http.ServeMux, log *slog.Logger, dataDir string) {
 		}()
 		install, err := ex.Install(ctx, executor.InstallPlan{KitPath: body.KitPath, DeploymentProfile: body.DeploymentProfile})
 		if err != nil {
+			logLinuxInstallStageFailure(log, "install", body.Host, body.Port, err)
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "install failed", "detail": err.Error()})
 			return
 		}
 		verify, err := ex.Verify(ctx, executor.Target{Host: body.Host, Kind: executor.KindSSH})
 		if err != nil {
+			logLinuxInstallStageFailure(log, "verify", body.Host, body.Port, err)
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "verify failed", "detail": err.Error()})
 			return
 		}
@@ -376,6 +379,20 @@ func registerInstall(mux *http.ServeMux, log *slog.Logger, dataDir string) {
 
 func linuxDeploymentKitReady(verify executor.LocalVerifyResult) bool {
 	return verify.DeploymentKitVersion != "" && verify.DeployerStatus == "active"
+}
+
+func logLinuxInstallStageFailure(log *slog.Logger, stage, host string, port int, err error) {
+	if log == nil || err == nil {
+		return
+	}
+	log.Error(
+		"linux remote installation failed",
+		"stage", stage,
+		"host", host,
+		"port", port,
+		"error", stage+"_failed",
+		"technical_detail", err,
+	)
 }
 
 func clearSecretBytes(secret []byte) {
