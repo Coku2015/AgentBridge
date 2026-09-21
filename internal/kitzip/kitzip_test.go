@@ -78,7 +78,7 @@ func TestExtractRequiresOfficialInstaller(t *testing.T) {
 }
 
 func TestExtractRejectsUnsafeEntryNames(t *testing.T) {
-	for _, name := range []string{"../evil.sh", "/abs/evil.sh", `back\slash.sh`, ""} {
+	for _, name := range []string{"../evil.sh", `..\evil.sh`, "/abs/evil.sh", `C:\abs\evil.sh`, `\\server\share\evil.sh`, ""} {
 		var buf bytes.Buffer
 		zw := zip.NewWriter(&buf)
 		w, err := zw.Create(name)
@@ -90,6 +90,38 @@ func TestExtractRejectsUnsafeEntryNames(t *testing.T) {
 		if _, err := Extract(bytes.NewReader(buf.Bytes())); err == nil {
 			t.Fatalf("entry %q must be rejected", name)
 		}
+	}
+}
+
+func TestExtractNormalizesWindowsStyleEntryNames(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, name := range []string{`Certificate\client-cert.pem`, "install-deployment-kit.sh"} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("BODY-" + name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := Extract(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("extract Windows-style kit: %v", err)
+	}
+	got := map[string]string{}
+	for _, file := range files {
+		got[file.Name] = string(file.Data)
+	}
+	if got["Certificate/client-cert.pem"] == "" {
+		t.Fatalf("normalized certificate entry missing: %v", got)
+	}
+	if _, ok := got[`Certificate\client-cert.pem`]; ok {
+		t.Fatalf("backslash entry was not normalized: %v", got)
 	}
 }
 
