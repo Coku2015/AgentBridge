@@ -5,7 +5,8 @@
 //   - serve the Vue UI embedded via go:embed (see webembed.go);
 //   - JSON API + Server-Sent Events for real-time per-host progress;
 //   - localhost mode: random bootstrap token + secure session cookie;
-//   - server mode: mandatory TLS + admin auth (AB-FR-003..006, section 17.2);
+//   - server mode: admin auth is mandatory for remote access; TLS is optional
+//     (AB-FR-003..006, section 17.2);
 //   - strict web hardening: SameSite cookies, CSRF token, Origin check, CSP,
 //     rate limiting, no cross-origin management API, no arbitrary command API.
 //

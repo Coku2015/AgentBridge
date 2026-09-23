@@ -69,6 +69,18 @@ You will need:
    - **Windows** — test the administrator credentials and install the Deployment Kit, or run the manual installation command on the host.
    - Select ready hosts, create a certificate-based `Individual Computers` Protection Group, and wait for the VBR rescan.
 
+## Remote access
+
+To open the Web Console to other machines, bind to a network interface and provide an admin token file:
+
+Create the file with a long random token and restrict it to the account running AgentBridge.
+
+```bash
+agentbridge serve --listen 0.0.0.0:8787 --admin-token-file ./admin.token
+```
+
+The browser will prompt for the token stored in that file. TLS is optional: without `--tls-cert` and `--tls-key`, AgentBridge serves HTTP; provide both flags to serve HTTPS. Since HTTP sends the token and management traffic without encryption, use it only on a trusted LAN or VPN.
+
 ## See the workflow
 
 ### 1. Connect to VBR and prepare deployment components
@@ -98,6 +110,7 @@ You will need:
 - A compatibility recommendation for an unsupported Linux distribution is not Veeam vendor support. Validate it in a lab first.
 - Generating a new Deployment Kit invalidates older Kits that have not been used. Prepare the installation files before a large rollout.
 - “Installed locally” and “discovered by VBR” are independent outcomes. Use the layered status in the console to diagnose the next action.
+- Manual-install scripts check the guest's inbound TCP 6160 rule, add an allow rule for any source when needed, then probe reachability from AgentBridge. External firewalls, cloud security groups, and unsupported guest firewalls still require separate configuration. On iptables-only systems without a rule-persistence service, the rule may be lost after reboot. Windows manual mode installs the Deployment Kit; VBR deploys the Agent later.
 
 ## Help and contributions
 

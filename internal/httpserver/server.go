@@ -24,13 +24,15 @@ import (
 // Options configures the embedded HTTP server (section 7.2).
 type Options struct {
 	// Listen defaults to 127.0.0.1:8787 in localhost mode. Any non-loopback
-	// value requires TLSCert, TLSKey and AdminTokenFile (AB-FR-005).
+	// value requires AdminTokenFile; TLSCert and TLSKey are optional but must be
+	// supplied together (AB-FR-005).
 	Listen string
 
 	// DataDir holds jobs, cache, campaigns and logs (section 16.3).
 	DataDir string
 
-	// TLSCert / TLSKey are required for a non-loopback listener.
+	// TLSCert / TLSKey enable HTTPS when both are supplied. They are optional
+	// for remote listeners, which still require AdminTokenFile.
 	TLSCert string
 	TLSKey  string
 
@@ -53,8 +55,8 @@ type Options struct {
 // Serve runs the embedded Web UI and HTTP API until ctx is cancelled.
 //
 // Localhost mode (default) binds 127.0.0.1 and issues an ephemeral session
-// token. Remote mode is REJECTED unless TLS + admin authentication are fully
-// configured (AB-FR-003, AB-FR-005, FR-041).
+// token. Remote mode requires admin authentication; TLS is optional and uses
+// HTTPS when both certificate and key paths are supplied (AB-FR-005, FR-041).
 func Serve(ctx context.Context, opts Options) (retErr error) {
 	if opts.Listen == "" {
 		opts.Listen = "127.0.0.1:8787"
@@ -63,8 +65,12 @@ func Serve(ctx context.Context, opts Options) (retErr error) {
 		opts.DataDir = "data" // local runtime dir (cache + campaigns); never holds secrets
 	}
 	remote := !isLoopback(opts.Listen)
-	if remote && (opts.TLSCert == "" || opts.TLSKey == "" || opts.AdminTokenFile == "") {
-		return errors.New("remote --listen requires --tls-cert, --tls-key and --admin-token-file")
+	tlsEnabled := opts.TLSCert != "" && opts.TLSKey != ""
+	if (opts.TLSCert == "") != (opts.TLSKey == "") {
+		return errors.New("--tls-cert and --tls-key must be supplied together")
+	}
+	if remote && opts.AdminTokenFile == "" {
+		return errors.New("remote --listen requires --admin-token-file; TLS certificate and key are optional")
 	}
 
 	logger, scrubber, adminToken, sessionToken, logFile, err := bootstrap(opts, remote)
@@ -105,23 +111,28 @@ func Serve(ctx context.Context, opts Options) (retErr error) {
 	}
 	defer listener.Close()
 
+	var handler http.Handler = mux
+	if remote {
+		handler = requireRemoteAdminAuth(mux, adminToken)
+	}
+
 	srv := &http.Server{
 		Addr:              opts.Listen,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("agentbridge serving", "listen", listener.Addr().String(), "remote", remote)
-		if remote {
+		logger.Info("agentbridge serving", "listen", listener.Addr().String(), "remote", remote, "tls", tlsEnabled)
+		if tlsEnabled {
 			serverErr <- srv.ServeTLS(listener, opts.TLSCert, opts.TLSKey)
 		} else {
 			serverErr <- srv.Serve(listener)
 		}
 	}()
 
-	primaryURL, alternativeURL := accessURLs(listener.Addr().String(), remote)
+	primaryURL, alternativeURL := accessURLs(listener.Addr().String(), tlsEnabled)
 	browserOpened := false
 	if !remote && !opts.NoBrowser {
 		if err := launchBrowser(primaryURL); err != nil {
@@ -230,7 +241,12 @@ func bootstrap(opts Options, remote bool) (*slog.Logger, *security.Scrubber, str
 			_ = logFile.Close()
 			return nil, nil, "", "", nil, err
 		}
-		return logger, scrubber, strings.TrimSpace(string(raw)), "", logFile, nil
+		token := strings.TrimSpace(string(raw))
+		if token == "" {
+			_ = logFile.Close()
+			return nil, nil, "", "", nil, errors.New("admin token file is empty")
+		}
+		return logger, scrubber, token, "", logFile, nil
 	}
 	tok, err := randomToken(32)
 	if err != nil {
@@ -380,6 +396,22 @@ func validBearer(r *http.Request, expected string) bool {
 	got := r.Header.Get("Authorization")
 	got = strings.TrimPrefix(got, "Bearer ")
 	return subtleEqual(got, expected)
+}
+
+// requireRemoteAdminAuth protects every remote management endpoint while
+// leaving the embedded UI and a non-sensitive health check accessible. The UI
+// obtains authorization by asking the operator for the admin token.
+func requireRemoteAdminAuth(next http.Handler, adminToken string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protected := strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health"
+		protected = protected || r.URL.Path == "/events"
+		if protected && !validBearer(r, adminToken) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // subtleEqual compares two strings without short-circuiting.

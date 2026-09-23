@@ -75,24 +75,27 @@ func run(args []string) error {
 }
 
 // serveCmd implements `agentbridge serve`. Defaults to a loopback listener with
-// a random session token; remote listeners are rejected unless TLS + admin auth
-// are configured (AB-FR-003, AB-FR-005).
+// a random session token; remote listeners require admin auth, while TLS is
+// optional (AB-FR-005).
 func serveCmd(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	listen := fs.String("listen", "127.0.0.1:8787", "listen address")
 	dataDir := fs.String("data-dir", "", "data directory for jobs, cache and logs")
-	tlsCert := fs.String("tls-cert", "", "TLS certificate path (required for non-loopback --listen)")
-	tlsKey := fs.String("tls-key", "", "TLS key path (required for non-loopback --listen)")
+	tlsCert := fs.String("tls-cert", "", "optional TLS certificate path (requires --tls-key)")
+	tlsKey := fs.String("tls-key", "", "optional TLS key path (requires --tls-cert)")
 	adminTokenFile := fs.String("admin-token-file", "", "file holding the admin bearer token (required for non-loopback --listen)")
 	noBrowser := fs.Bool("no-browser", false, "do not open the default browser")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	// AB-FR-005: a non-loopback listener MUST NOT expose the management UI in
-	// cleartext or without admin authentication.
-	if !isLoopback(*listen) && (*tlsCert == "" || *tlsKey == "" || *adminTokenFile == "") {
-		return errors.New("remote --listen requires --tls-cert, --tls-key and --admin-token-file")
+	if (*tlsCert == "") != (*tlsKey == "") {
+		return errors.New("--tls-cert and --tls-key must be supplied together")
+	}
+	// AB-FR-005: every non-loopback listener requires admin authentication. TLS
+	// is optional so operators can use trusted LAN/VPN access without certificates.
+	if !isLoopback(*listen) && *adminTokenFile == "" {
+		return errors.New("remote --listen requires --admin-token-file; TLS certificate and key are optional")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

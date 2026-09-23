@@ -154,3 +154,4 @@ textarea.fieldbox{white-space:pre-wrap}
 .veeam-credential-form>.credential-description-field{display:block;margin-top:16px}
 .veeam-credential-form>.credential-description-field>label{margin-bottom:6px}
 .credential-description-field textarea{min-height:96px}
+.remote-auth-panel{max-width:560px;margin:0 auto}.remote-auth-panel h2{margin:0 0 8px;font-size:18px}.remote-auth-panel>p{margin:0 0 16px;color:var(--muted);font-size:13px}.remote-auth-panel .remote-http-warning{padding:12px;border:1px solid color-mix(in oklch,var(--danger) 28%,var(--border));border-radius:8px;background:color-mix(in oklch,var(--danger) 5%,var(--surface));color:var(--danger)}

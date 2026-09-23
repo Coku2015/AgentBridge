@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf16"
+
+	"github.com/Coku2015/agentbridge/internal/deploymentprobe"
 )
 
 const manualDownloadTTL = 30 * time.Minute
@@ -26,6 +28,8 @@ type manualDownload struct {
 	path        string
 	filename    string
 	downloadURL string
+	probeURL    string
+	probeHost   string
 	expiresAt   time.Time
 	platform    string
 	sha256      string
@@ -54,7 +58,11 @@ func (s *manualDownloadServer) publishForPlatform(path, platform, digest string)
 	return s.publishWithOptions(path, platform, digest)
 }
 
-func (s *manualDownloadServer) publishWithOptions(path, platform, digest string) (string, time.Time, error) {
+func (s *manualDownloadServer) publishForTarget(path, platform, digest, targetHost string) (string, time.Time, error) {
+	return s.publishWithOptions(path, platform, digest, targetHost)
+}
+
+func (s *manualDownloadServer) publishWithOptions(path, platform, digest string, targetHosts ...string) (string, time.Time, error) {
 	if path == "" {
 		return "", time.Time{}, fmt.Errorf("manual install: empty bundle path")
 	}
@@ -64,6 +72,18 @@ func (s *manualDownloadServer) publishWithOptions(path, platform, digest string)
 	token, err := randomManualToken()
 	if err != nil {
 		return "", time.Time{}, err
+	}
+	var probeHost string
+	if len(targetHosts) > 0 {
+		probeHost = strings.TrimSpace(targetHosts[0])
+	}
+	probeURL := ""
+	var probeToken string
+	if probeHost != "" {
+		probeToken, err = randomManualToken()
+		if err != nil {
+			return "", time.Time{}, err
+		}
 	}
 	expiresAt := time.Now().Add(manualDownloadTTL)
 
@@ -80,10 +100,18 @@ func (s *manualDownloadServer) publishWithOptions(path, platform, digest string)
 	host := manualDownloadHost()
 	baseURL := "http://" + net.JoinHostPort(host, fmt.Sprint(s.listener.Addr().(*net.TCPAddr).Port))
 	downloadURL := baseURL + "/manual-install/download/" + token
+	if probeToken != "" {
+		probeURL = baseURL + "/manual-install/probe/" + probeToken
+		s.items[probeToken] = manualDownload{
+			probeHost: probeHost,
+			expiresAt: expiresAt,
+		}
+	}
 	s.items[token] = manualDownload{
 		path:        path,
 		filename:    filepath.Base(path),
 		downloadURL: downloadURL,
+		probeURL:    probeURL,
 		expiresAt:   expiresAt,
 		platform:    platform,
 		sha256:      digest,
@@ -113,24 +141,32 @@ func (s *manualDownloadServer) ensureStartedLocked() error {
 }
 
 func (s *manualDownloadServer) handleDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	const (
 		bootstrapPrefix = "/manual-install/bootstrap/"
 		downloadPrefix  = "/manual-install/download/"
+		probePrefix     = "/manual-install/probe/"
 	)
 	bootstrap := strings.HasPrefix(r.URL.Path, bootstrapPrefix)
 	download := strings.HasPrefix(r.URL.Path, downloadPrefix)
-	if !bootstrap && !download {
+	probe := strings.HasPrefix(r.URL.Path, probePrefix)
+	if !bootstrap && !download && !probe {
 		http.NotFound(w, r)
+		return
+	}
+	if (probe && r.Method != http.MethodPost) || (!probe && r.Method != http.MethodGet) {
+		if probe {
+			w.Header().Set("Allow", http.MethodPost)
+		} else {
+			w.Header().Set("Allow", http.MethodGet)
+		}
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	prefix := downloadPrefix
 	if bootstrap {
 		prefix = bootstrapPrefix
+	} else if probe {
+		prefix = probePrefix
 	}
 	token := strings.TrimPrefix(r.URL.Path, prefix)
 	if token == "" || strings.ContainsAny(token, "/\\") {
@@ -140,24 +176,34 @@ func (s *manualDownloadServer) handleDownload(w http.ResponseWriter, r *http.Req
 
 	s.mu.Lock()
 	item, ok := s.items[token]
-	if ok && download {
-		delete(s.items, token) // one download command consumes its token
+	if ok && (download || probe) {
+		delete(s.items, token) // download and external probe tokens are one-shot
 	}
 	s.mu.Unlock()
 	if !ok || time.Now().After(item.expiresAt) {
 		http.NotFound(w, r)
 		return
 	}
+	if probe {
+		if item.probeHost == "" {
+			http.NotFound(w, r)
+			return
+		}
+		result := deploymentprobe.Check(r.Context(), item.probeHost, deploymentprobe.DefaultPort)
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"status": result.Status, "reason": result.Reason})
+		return
+	}
 	if bootstrap {
 		if item.platform == "windows" {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
-			_, _ = io.WriteString(w, manualWindowsBootstrapScript(item.downloadURL, item.sha256))
+			_, _ = io.WriteString(w, manualWindowsBootstrapScriptWithProbe(item.downloadURL, item.sha256, item.probeURL))
 			return
 		}
 		w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = io.WriteString(w, manualBootstrapScript(item.downloadURL))
+		_, _ = io.WriteString(w, manualBootstrapScriptWithProbe(item.downloadURL, item.probeURL))
 		return
 	}
 
@@ -182,27 +228,66 @@ func (s *manualDownloadServer) handleDownload(w http.ResponseWriter, r *http.Req
 // behind the short command shown in the UI. It contains no credential and its
 // archive URL is short-lived and one-shot.
 func manualBootstrapScript(downloadURL string) string {
-	return fmt.Sprintf(`#!/bin/sh
+	return manualBootstrapScriptWithProbe(downloadURL, "")
+}
+
+func manualBootstrapScriptWithProbe(downloadURL, probeURL string) string {
+	probeScript := ""
+	if probeURL != "" {
+		probeScript = `
+  probe_result=$(curl -fsS -X POST ` + shellQuote(probeURL) + ` 2>/dev/null || true)
+  case "$probe_result" in
+    *'"status":"ready"'*) printf 'External TCP 6160 probe: reachable from AgentBridge.\n' ;;
+    *'"status":"failed"'*) printf 'External TCP 6160 probe: not reachable from AgentBridge; check upstream firewalls and routing.\n' ;;
+    *) printf 'External TCP 6160 probe: could not complete; run Check in AgentBridge.\n' ;;
+  esac
+`
+	}
+	return `#!/bin/sh
 set -eu
 work_dir=$(mktemp -d /tmp/agentbridge.XXXXXX)
 trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
-curl -fsSL %s -o "$work_dir/bundle.tar.gz"
+curl -fsSL ` + shellQuote(downloadURL) + ` -o "$work_dir/bundle.tar.gz"
 tar -xzf "$work_dir/bundle.tar.gz" -C "$work_dir"
 cd "$work_dir"
 if ./install.sh >"$work_dir/install.log" 2>&1; then
   printf 'AgentBridge installation completed.\n'
-else
+  firewall_status=$(grep '^AgentBridge firewall: ' "$work_dir/install.log" | tail -n 1 || true)
+  [ -z "$firewall_status" ] || printf '%s\n' "$firewall_status"
+` + probeScript + `else
   cat "$work_dir/install.log" >&2
   exit 1
 fi
-`, shellQuote(downloadURL))
+`
 }
 
 // manualWindowsBootstrapScript is served through a short-lived token. It
 // verifies the kit digest, asks for elevation when needed, and invokes the
 // official batch installer in an administrator context.
 func manualWindowsBootstrapScript(downloadURL, digest string) string {
+	return manualWindowsBootstrapScriptWithProbe(downloadURL, digest, "")
+}
+
+func manualWindowsBootstrapScriptWithProbe(downloadURL, digest, probeURL string) string {
+	probeScript := ""
+	if probeURL != "" {
+		probeScript = `
+try {
+  $probeResponse = Invoke-WebRequest -UseBasicParsing -Method Post -Uri '` + strings.ReplaceAll(probeURL, "'", "''") + `'
+  if ($probeResponse.Content -match '"status"\s*:\s*"ready"') {
+    Write-Output 'External TCP 6160 probe: reachable from AgentBridge.'
+  } elseif ($probeResponse.Content -match '"status"\s*:\s*"failed"') {
+    Write-Output 'External TCP 6160 probe: not reachable from AgentBridge; check upstream firewalls and routing.'
+  } else {
+    Write-Output 'External TCP 6160 probe: could not complete; run Check in AgentBridge.'
+  }
+} catch {
+  Write-Output 'External TCP 6160 probe: could not complete; run Check in AgentBridge.'
+}
+`
+	}
 	body := "$ErrorActionPreference = 'Stop'\n" +
+		ensureWindowsFirewall6160Script() +
 		"$expectedSHA = '" + strings.ToUpper(digest) + "'\n" +
 		"$download = '" + strings.ReplaceAll(downloadURL, "'", "''") + "'\n" +
 		"function Get-AgentBridgeSHA256([string]$path) { $stream = [System.IO.File]::OpenRead($path); $sha = [System.Security.Cryptography.SHA256]::Create(); try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') } finally { $sha.Dispose(); $stream.Dispose() } }\n" +
@@ -212,11 +297,77 @@ func manualWindowsBootstrapScript(downloadURL, digest string) string {
 		"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $root)\n" +
 		"$bat = Get-ChildItem -LiteralPath $root -Filter 'InstallDeploymentKit.bat' -Recurse | Select-Object -First 1; if (-not $bat) { throw 'InstallDeploymentKit.bat not found' }\n" +
 		"Push-Location $bat.DirectoryName; & cmd.exe /c $bat.FullName; Pop-Location; if ($LASTEXITCODE -ne 0) { throw ('InstallDeploymentKit.bat exit code ' + $LASTEXITCODE) }\n" +
-		"$svc = Get-Service -Name VeeamDeploySvc -ErrorAction SilentlyContinue; if (-not $svc) { throw 'VeeamDeploySvc was not found after installation' }\n" +
+		"$svc = Get-Service -Name VeeamDeploySvc -ErrorAction SilentlyContinue; if (-not $svc) { throw 'VeeamDeploySvc was not found after installation' }; $svcDeadline = [DateTime]::UtcNow.AddSeconds(30); do { $svc = Get-Service -Name VeeamDeploySvc -ErrorAction SilentlyContinue; if ($svc -and [string]$svc.Status -eq 'Running') { break }; Start-Sleep -Seconds 1 } while ([DateTime]::UtcNow -lt $svcDeadline); if (-not $svc -or [string]$svc.Status -ne 'Running') { throw 'VeeamDeploySvc is not running after installation' }\n" +
+		"$firewallStatus = 'not checked'; try { $firewallStatus = Ensure-AgentBridgeFirewall6160 } catch { $firewallStatus = 'could not configure automatically: ' + $_.Exception.Message }; Write-Output ('AgentBridge firewall: ' + $firewallStatus)\n" +
+		probeScript +
 		"Remove-Item -LiteralPath $root -Recurse -Force\n"
 	encoded := base64.StdEncoding.EncodeToString(utf16LE(body))
 	return "$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)\n" +
 		"if (-not $isAdmin) { Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','" + encoded + "') | Out-Null; return }\n" + body
+}
+
+func ensureWindowsFirewall6160Script() string {
+	return `function Ensure-AgentBridgeFirewall6160 {
+  $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop | Where-Object { $_.Enabled -eq 'True' })
+  if ($profiles.Count -eq 0) { return 'Windows Defender Firewall is disabled; no rule needed.' }
+
+  $rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Direction Inbound -Enabled True -Action Allow -ErrorAction SilentlyContinue)
+  foreach ($rule in $rules) {
+    $profileNames = @(([string]$rule.Profile) -split ',\s*')
+    $profilesCovered = $profileNames -contains 'Any'
+    if (-not $profilesCovered) {
+      $profilesCovered = $true
+      foreach ($profile in $profiles) {
+        if ($profileNames -notcontains [string]$profile.Name) { $profilesCovered = $false; break }
+      }
+    }
+    if (-not $profilesCovered) { continue }
+    $portFilters = @($rule | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue)
+    $addressFilters = @($rule | Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue)
+    $applicationFilters = @($rule | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue)
+    $serviceFilters = @($rule | Get-NetFirewallServiceFilter -ErrorAction SilentlyContinue)
+    $remoteAny = $false
+    foreach ($addressFilter in $addressFilters) {
+      if (@($addressFilter.RemoteAddress | ForEach-Object { [string]$_ }) -contains 'Any') { $remoteAny = $true; break }
+    }
+    if (-not $remoteAny) { continue }
+    $applicationMatches = $true
+    foreach ($applicationFilter in $applicationFilters) {
+      $program = [string]$applicationFilter.Program
+      if ($program -and $program -notin @('Any', 'System') -and $program -notmatch '(?i)veeam.*deploy') { $applicationMatches = $false; break }
+    }
+    if (-not $applicationMatches) { continue }
+    $serviceMatches = $true
+    foreach ($serviceFilter in $serviceFilters) {
+      $service = [string]$serviceFilter.Service
+      if ($service -and $service -notin @('Any', 'VeeamDeploySvc', 'VeeamDeploymentSvc')) { $serviceMatches = $false; break }
+    }
+    if (-not $serviceMatches) { continue }
+    foreach ($portFilter in $portFilters) {
+      $protocol = [string]$portFilter.Protocol
+      if ($protocol -notin @('TCP', 'Any', '6')) { continue }
+      foreach ($localPort in @($portFilter.LocalPort | ForEach-Object { [string]$_ })) {
+        $matchesPort = $localPort -eq 'Any' -or $localPort -eq '6160'
+        if (-not $matchesPort -and $localPort -match '^([0-9]+)-([0-9]+)$') {
+          $matchesPort = [int]$matches[1] -le 6160 -and [int]$matches[2] -ge 6160
+        }
+        if ($matchesPort) { return 'TCP 6160 is already allowed from any source; skipped.' }
+      }
+    }
+  }
+
+  $ruleName = 'AgentBridge-VeeamDeploymentService-TCP-6160'
+  $ownedRule = Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
+  if ($ownedRule) {
+    $ownedRule | Set-NetFirewallRule -Enabled True -Action Allow -Direction Inbound -Profile Any
+    $ownedRule | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -Protocol TCP -LocalPort 6160
+    $ownedRule | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter -RemoteAddress Any
+  } else {
+    New-NetFirewallRule -Name $ruleName -DisplayName 'AgentBridge Veeam Deployment Service TCP 6160' -Direction Inbound -Enabled True -Action Allow -Protocol TCP -LocalPort 6160 -RemoteAddress Any -Profile Any | Out-Null
+  }
+  return 'added inbound TCP 6160 allow rule for any source.'
+}
+`
 }
 
 func utf16LE(value string) []byte {

@@ -478,6 +478,178 @@ fail() {
   exit 1
 }
 
+iptables_input_allows_6160() {
+  IPT_COMMAND=$1
+  IPT_RULES=$($IPT_COMMAND -S INPUT 2>/dev/null || true)
+  IPT_POLICY=$(printf '%s\n' "$IPT_RULES" | awk '$1 == "-P" && $2 == "INPUT" { print $3; exit }')
+  IPT_FIRST_RULE=$(printf '%s\n' "$IPT_RULES" | awk '/^-A INPUT / { print; exit }')
+  case "$IPT_FIRST_RULE" in
+    *"--comment AgentBridge-allow-tcp-6160"*) return 0 ;;
+  esac
+  if [ "$IPT_POLICY" = ACCEPT ] && ! printf '%s\n' "$IPT_RULES" | grep -q '^-A INPUT '; then return 0; fi
+  if printf '%s\n' "$IPT_RULES" | grep -Eq '^-A INPUT .* -j (DROP|REJECT)( |$)'; then return 1; fi
+  if "$IPT_COMMAND" -C INPUT -p tcp --dport 6160 -j ACCEPT >/dev/null 2>&1 || "$IPT_COMMAND" -C INPUT -j ACCEPT >/dev/null 2>&1; then return 0; fi
+  return 1
+}
+
+persist_firewall_rules() {
+  SAVE_COMMAND=$1
+  SAVE_PATH=$2
+  SAVE_TEMP="${SAVE_PATH}.agentbridge.$$"
+  if ! "$SAVE_COMMAND" > "$SAVE_TEMP" 2>/dev/null; then
+    rm -f "$SAVE_TEMP"
+    return 1
+  fi
+  if ! mv -f "$SAVE_TEMP" "$SAVE_PATH"; then
+    rm -f "$SAVE_TEMP"
+    return 1
+  fi
+  return 0
+}
+
+ensure_firewall_port_6160() {
+  FW_STATUS=""
+
+  if command -v firewall-cmd >/dev/null 2>&1 && [ "$(firewall-cmd --state 2>/dev/null || true)" = running ]; then
+    FW_ZONES=$(firewall-cmd --get-active-zones 2>/dev/null | awk 'NF == 1 { print $1 }')
+    [ -n "$FW_ZONES" ] || FW_ZONES=$(firewall-cmd --get-default-zone 2>/dev/null || true)
+    if [ -z "$FW_ZONES" ]; then
+      FW_STATUS="firewalld is running but no active/default zone could be determined"
+      return 1
+    fi
+    FW_CHANGED=no
+    for FW_ZONE in $FW_ZONES; do
+      FW_ZONE_OPEN=no
+      if firewall-cmd --zone="$FW_ZONE" --query-port=6160/tcp >/dev/null 2>&1; then
+        FW_ZONE_OPEN=yes
+      elif firewall-cmd --zone="$FW_ZONE" --list-all 2>/dev/null | grep -Eq '^[[:space:]]*target: ACCEPT$'; then
+        FW_ZONE_OPEN=yes
+      else
+        FW_SERVICES=$(firewall-cmd --zone="$FW_ZONE" --list-services 2>/dev/null || true)
+        for FW_SERVICE in $FW_SERVICES; do
+          if firewall-cmd --info-service="$FW_SERVICE" 2>/dev/null | grep -Eq '(^|[[:space:]])6160/tcp([[:space:]]|$)'; then
+            FW_ZONE_OPEN=yes
+            break
+          fi
+        done
+      fi
+      if [ "$FW_ZONE_OPEN" != yes ]; then
+        if ! firewall-cmd --permanent --zone="$FW_ZONE" --query-port=6160/tcp >/dev/null 2>&1; then
+          firewall-cmd --permanent --zone="$FW_ZONE" --add-port=6160/tcp >/dev/null 2>&1 || {
+            FW_STATUS="firewalld could not persist the TCP 6160 allow rule"
+            return 1
+          }
+        fi
+        if ! firewall-cmd --zone="$FW_ZONE" --query-port=6160/tcp >/dev/null 2>&1; then
+          firewall-cmd --zone="$FW_ZONE" --add-port=6160/tcp >/dev/null 2>&1 || {
+            FW_STATUS="firewalld could not activate the TCP 6160 allow rule"
+            return 1
+          }
+        fi
+        FW_CHANGED=yes
+      fi
+    done
+    if [ "$FW_CHANGED" = yes ]; then FW_STATUS="added TCP 6160 allow rule to active firewalld zones for any source"; else FW_STATUS="TCP 6160 is already allowed in active firewalld zones; skipped"; fi
+    return 0
+  fi
+
+  if command -v ufw >/dev/null 2>&1; then
+    FW_UFW_STATUS=$(ufw status 2>/dev/null || true)
+    if printf '%s\n' "$FW_UFW_STATUS" | grep -q '^Status: active'; then
+      FW_UFW4=no
+      FW_UFW6=no
+      printf '%s\n' "$FW_UFW_STATUS" | grep -Eq '^6160/tcp[[:space:]]+ALLOW([[:space:]]+IN)?[[:space:]]+Anywhere([[:space:]]|$)' && FW_UFW4=yes
+      printf '%s\n' "$FW_UFW_STATUS" | grep -Eq '^6160/tcp[[:space:]]+\(v6\)[[:space:]]+ALLOW([[:space:]]+IN)?[[:space:]]+Anywhere([[:space:]]|$)' && FW_UFW6=yes
+      FW_IPV6_ENABLED=no
+      if [ -r /etc/default/ufw ] && grep -Eq '^[[:space:]]*IPV6=yes' /etc/default/ufw; then FW_IPV6_ENABLED=yes; fi
+      if [ "$FW_UFW4" = yes ] && { [ "$FW_IPV6_ENABLED" != yes ] || [ "$FW_UFW6" = yes ]; }; then
+        FW_STATUS="TCP 6160 is already allowed from any source by ufw; skipped"
+        return 0
+      fi
+      if ! ufw allow in 6160/tcp >/dev/null 2>&1; then
+        FW_STATUS="ufw could not add the TCP 6160 allow rule"
+        return 1
+      fi
+      FW_UFW_STATUS=$(ufw status 2>/dev/null || true)
+      FW_UFW4=no
+      FW_UFW6=no
+      printf '%s\n' "$FW_UFW_STATUS" | grep -Eq '^6160/tcp[[:space:]]+ALLOW([[:space:]]+IN)?[[:space:]]+Anywhere([[:space:]]|$)' && FW_UFW4=yes
+      printf '%s\n' "$FW_UFW_STATUS" | grep -Eq '^6160/tcp[[:space:]]+\(v6\)[[:space:]]+ALLOW([[:space:]]+IN)?[[:space:]]+Anywhere([[:space:]]|$)' && FW_UFW6=yes
+      if [ "$FW_UFW4" != yes ] || { [ "$FW_IPV6_ENABLED" = yes ] && [ "$FW_UFW6" != yes ]; }; then
+        FW_STATUS="ufw did not confirm the TCP 6160 allow rule"
+        return 1
+      fi
+      FW_STATUS="added TCP 6160 allow rule to ufw for any source"
+      return 0
+    fi
+  fi
+
+  if command -v iptables >/dev/null 2>&1; then
+    FW_CHANGED=no
+    if ! iptables_input_allows_6160 iptables; then
+      iptables -I INPUT 1 -p tcp -m tcp --dport 6160 -m comment --comment AgentBridge-allow-tcp-6160 -j ACCEPT >/dev/null 2>&1 || {
+        FW_STATUS="iptables could not add the TCP 6160 allow rule"
+        return 1
+      }
+      FW_CHANGED=yes
+    fi
+    if command -v ip6tables >/dev/null 2>&1 && ip6tables -S INPUT >/dev/null 2>&1; then
+      FW_IPV6_CHANGED=no
+      if ! iptables_input_allows_6160 ip6tables; then
+        ip6tables -I INPUT 1 -p tcp -m tcp --dport 6160 -m comment --comment AgentBridge-allow-tcp-6160 -j ACCEPT >/dev/null 2>&1 || {
+          FW_STATUS="ip6tables could not add the TCP 6160 allow rule"
+          return 1
+        }
+        FW_CHANGED=yes
+        FW_IPV6_CHANGED=yes
+      fi
+    else
+      FW_IPV6_CHANGED=no
+    fi
+    if [ "$FW_CHANGED" = no ]; then
+      FW_STATUS="TCP 6160 is already allowed by iptables/ip6tables; skipped"
+      return 0
+    fi
+    FW_PERSISTED=no
+    if command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1; then
+      FW_PERSISTED=yes
+    elif command -v service >/dev/null 2>&1 && service iptables save >/dev/null 2>&1; then
+      FW_PERSISTED=yes
+      if [ "$FW_IPV6_CHANGED" = yes ] && ! service ip6tables save >/dev/null 2>&1; then FW_PERSISTED=no; fi
+    elif [ -e /etc/sysconfig/iptables ] && persist_firewall_rules iptables-save /etc/sysconfig/iptables; then
+      FW_PERSISTED=yes
+      if [ "$FW_IPV6_CHANGED" = yes ]; then
+        if command -v ip6tables-save >/dev/null 2>&1 && [ -e /etc/sysconfig/ip6tables ]; then persist_firewall_rules ip6tables-save /etc/sysconfig/ip6tables || FW_PERSISTED=no; else FW_PERSISTED=no; fi
+      fi
+    elif [ -e /etc/iptables/rules.v4 ] && persist_firewall_rules iptables-save /etc/iptables/rules.v4; then
+      FW_PERSISTED=yes
+      if [ "$FW_IPV6_CHANGED" = yes ]; then
+        if command -v ip6tables-save >/dev/null 2>&1 && [ -e /etc/iptables/rules.v6 ]; then persist_firewall_rules ip6tables-save /etc/iptables/rules.v6 || FW_PERSISTED=no; else FW_PERSISTED=no; fi
+      fi
+    elif [ -e /etc/iptables/iptables.rules ] && persist_firewall_rules iptables-save /etc/iptables/iptables.rules; then
+      FW_PERSISTED=yes
+      if [ "$FW_IPV6_CHANGED" = yes ]; then
+        if command -v ip6tables-save >/dev/null 2>&1 && [ -e /etc/iptables/ip6tables.rules ]; then persist_firewall_rules ip6tables-save /etc/iptables/ip6tables.rules || FW_PERSISTED=no; else FW_PERSISTED=no; fi
+      fi
+    fi
+    if [ "$FW_PERSISTED" = yes ]; then FW_STATUS="added and persisted TCP 6160 allow rule in iptables for any source"; else FW_STATUS="added TCP 6160 allow rule to iptables for this boot; no persistent save mechanism was found"; fi
+    return 0
+  fi
+
+  if command -v nft >/dev/null 2>&1; then
+    FW_NFT_RULES=$(nft list ruleset 2>/dev/null || true)
+    if [ -n "$FW_NFT_RULES" ]; then
+      FW_STATUS="nftables rules are present but no supported firewall manager was found; open TCP 6160/tcp manually"
+      return 1
+    fi
+    FW_STATUS="nftables has no active rules; no local allow rule was needed"
+    return 0
+  fi
+
+  FW_STATUS="no supported firewall manager was found; external TCP 6160 check will determine reachability"
+  return 0
+}
+
 # 1. integrity: verify every shipped artifact before touching the OS (AB-FR-144).
 if command -v sha256sum >/dev/null 2>&1 && [ -f SHA256SUMS ]; then
   sha256sum -c SHA256SUMS >/dev/null 2>&1 || fail "integrity check failed"
@@ -861,6 +1033,16 @@ if [ "$HAVE_KIT" = "yes" ] && [ -f "kit/install-deployment-kit.sh" ]; then
     if grep -q 'Nothing to do\|does not update installed package' /tmp/ab-kit.log 2>/dev/null \
        && rpm -q veeamdeployment >/dev/null 2>&1; then KIT_OK=yes; else KIT_ERR="deployment kit install failed (see /tmp/ab-kit.log on the target)"; fi
   fi
+fi
+
+if [ "$KIT_OK" = yes ]; then
+  if ensure_firewall_port_6160; then
+    printf 'AgentBridge firewall: %s\n' "$FW_STATUS"
+  else
+    printf 'AgentBridge firewall: %s\n' "$FW_STATUS" >&2
+  fi
+else
+  printf 'AgentBridge firewall: skipped because the Deployment Kit did not install successfully\n'
 fi
 
 # 4. verify — independent facts, never one collapsed flag (Principle IV, AB-FR-164).

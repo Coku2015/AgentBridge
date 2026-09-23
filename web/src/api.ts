@@ -91,7 +91,9 @@ export class ApiRequestError extends Error {
 
 let sessionToken = ''
 
-// setSessionToken stores the localhost ephemeral token (memory only).
+// setSessionToken stores the active API bearer token in page memory only. It is
+// either the localhost session token or the remote admin token entered by the
+// operator.
 export function setSessionToken(token: string): void {
   sessionToken = token
 }
@@ -110,7 +112,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const text = await res.text()
-  const data = text ? JSON.parse(text) : {}
+  let data: unknown = {}
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = { error: text }
+    }
+  }
   if (!res.ok) {
     const err = data as ApiError
     throw new ApiRequestError(res.status, err)
@@ -545,6 +554,7 @@ export function generateManualInstall(body: {
   deploymentProfile?: DeploymentProfile
   jobId?: string
   platform?: Platform
+  host?: string
   campaignId?: string
   kitSha256?: string
 }): Promise<ManualInstallInfo> {

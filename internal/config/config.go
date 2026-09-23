@@ -11,13 +11,13 @@ type Config struct {
 	DataDir        string // jobs, journal, logs
 	CacheDir       string // package cache
 	MaxConcurrency int    // default 10 (AB-NFR-003)
-	TLSCert        string // required for non-loopback Listen
+	TLSCert        string // optional; enables HTTPS when paired with TLSKey
 	TLSKey         string
 	AdminTokenFile string // required for non-loopback Listen
 }
 
 // Default returns the safe localhost configuration. A non-loopback Listen set
-// by the caller still requires TLS + admin token (see IsRemote).
+// by the caller still requires an admin token; TLS is optional (see IsRemote).
 func Default() Config {
 	return Config{
 		Listen:         "127.0.0.1:8787",
@@ -41,10 +41,11 @@ func (c Config) IsLoopback() bool {
 }
 
 // IsRemote reports whether Listen binds a non-loopback address, which requires
-// TLS + admin authentication (AB-FR-005, FR-041).
+// admin authentication; TLS is optional (AB-FR-005, FR-041).
 func (c Config) IsRemote() bool { return !c.IsLoopback() }
 
-// RemoteOK reports whether a remote listener is fully configured.
+// RemoteOK reports whether remote authentication is configured and any TLS
+// certificate/key pair is complete.
 func (c Config) RemoteOK() bool {
-	return c.TLSCert != "" && c.TLSKey != "" && c.AdminTokenFile != ""
+	return c.AdminTokenFile != "" && ((c.TLSCert == "") == (c.TLSKey == ""))
 }

@@ -1426,6 +1426,7 @@ async function generateHostManualCommand(): Promise<void> {
       kitPath: props.kitPath,
       deploymentProfile: profile,
       platform: row.platform,
+      host: row.host,
       campaignId: props.kitCampaignId,
       kitSha256: props.kitSha256,
     })

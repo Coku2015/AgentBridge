@@ -38,8 +38,8 @@ func initBundleBuilder(dataDir string) {
 // to PG/discovery (FR-036).
 func registerBundle(mux *http.ServeMux, dataDir string, manualDownloads *manualDownloadServer) {
 	// POST /api/manual-install/generate builds a self-contained archive and
-	// publishes one short-lived HTTP download URL. The target host pulls
-	// the archive; AgentBridge never opens an SSH connection to it.
+	// publishes short-lived download and external-readiness probe URLs. The
+	// target host pulls the archive; AgentBridge never opens an SSH connection.
 	generateManualInstall := func(w http.ResponseWriter, r *http.Request) {
 		initBundleBuilder(dataDir)
 		if bundleBuilderErr != nil {
@@ -57,6 +57,7 @@ func registerBundle(mux *http.ServeMux, dataDir string, manualDownloads *manualD
 			DeploymentProfile string   `json:"deploymentProfile"`
 			JobID             string   `json:"jobId"`
 			Platform          string   `json:"platform"`
+			Host              string   `json:"host"`
 			CampaignID        string   `json:"campaignId"`
 			KitSHA256         string   `json:"kitSha256"`
 		}
@@ -86,7 +87,7 @@ func registerBundle(mux *http.ServeMux, dataDir string, manualDownloads *manualD
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "manual install download service unavailable"})
 				return
 			}
-			downloadURL, expiresAt, publishErr := manualDownloads.publishForPlatform(kitPath, platform, digest)
+			downloadURL, expiresAt, publishErr := manualDownloads.publishForTarget(kitPath, platform, digest, body.Host)
 			if publishErr != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "manual install download service unavailable", "detail": publishErr.Error()})
 				return
@@ -119,7 +120,7 @@ func registerBundle(mux *http.ServeMux, dataDir string, manualDownloads *manualD
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "manual install download service unavailable"})
 			return
 		}
-		downloadURL, expiresAt, err := manualDownloads.publishForPlatform(b.Path, platform, b.SHA256)
+		downloadURL, expiresAt, err := manualDownloads.publishForTarget(b.Path, platform, b.SHA256, body.Host)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "manual install download service unavailable", "detail": err.Error()})
 			return

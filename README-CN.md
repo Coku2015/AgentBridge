@@ -69,6 +69,18 @@ Windows 上的 Veeam Agent 由 VBR 在 Protection Group 扫描后按 VBR 配置�
    - **Windows**：测试管理员凭据并安装 Deployment Kit，或复制手工安装命令到目标机执行；
    - 选择已就绪的主机，创建基于证书的 `Individual Computers` 类型保护组，并等待 VBR 完成扫描。
 
+## 远程访问
+
+如需让其他机器访问 Web 控制台，可监听网络接口并指定管理员令牌文件：
+
+请先创建该文件，写入足够长的随机令牌，并限制只有运行 AgentBridge 的帐户可以读取。
+
+```bash
+agentbridge serve --listen 0.0.0.0:8787 --admin-token-file ./admin.token
+```
+
+浏览器会提示输入该文件中的令牌。TLS 是可选的：不指定 `--tls-cert` 和 `--tls-key` 时使用 HTTP；同时提供这两个参数即可使用 HTTPS。HTTP 会明文传输令牌和管理数据，因此只应在可信内网或 VPN 中使用。
+
 ## 界面流程
 
 ### 1. 连接 VBR 并准备部署组件
@@ -98,6 +110,7 @@ Windows 上的 Veeam Agent 由 VBR 在 Protection Group 扫描后按 VBR 配置�
 - 非官方支持的 Linux 发行版可能得到兼容性推荐，但这不等同于 Veeam 官方支持；请先在实验环境完成验证。
 - 重新生成 Deployment Kit 会使尚未使用的旧 Kit 失效。大批量部署前请统一准备安装文件。
 - Windows 与 Linux 的“本地安装成功”和“VBR 已发现”是两个独立结果；请以控制台的分层状态为准。
+- 手工安装脚本会检查 guest 的 TCP 6160 入站规则；如未放行，会尝试为所有来源地址添加规则，并从 AgentBridge 主机探测实际连通性。外部防火墙、云安全组或不受支持的 guest 防火墙仍需单独配置；没有规则持久化服务的 iptables 环境可能在重启后丢失规则。Windows 手工模式安装的是 Deployment Kit，Agent 由 VBR 后续部署。
 
 ## 获取帮助与参与
 

@@ -7,7 +7,7 @@
 // VBR connection (and at least one installed host for 三) exists — the UI
 // path is disabled up front instead of failing mid-flow.
 import { computed, onMounted, ref } from 'vue'
-import { fetchProductVersion, fetchSession, setSessionToken, type AgentArtifact, type Capabilities, type ServerInfo } from './api'
+import { ApiRequestError, fetchProductVersion, fetchSession, setSessionToken, type AgentArtifact, type Capabilities, type ServerInfo } from './api'
 import { L, t, lang, setLang, stepNum } from './i18n'
 import { toast } from './ui/toast'
 import ToastRegion from './ui/ToastRegion.vue'
@@ -19,6 +19,15 @@ import StepProtect from './steps/StepProtect.vue'
 const booting = ref(true)
 const bootError = ref('')
 const productVersion = ref('')
+const remoteAuthRequired = ref(false)
+const adminTokenInput = ref('')
+const authBusy = ref(false)
+const authError = ref('')
+const plaintextRemote = computed(() => {
+  if (window.location.protocol !== 'http:') return false
+  const hostname = window.location.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  return !['localhost', '127.0.0.1', '::1'].includes(hostname)
+})
 
 const activeStep = ref(1)
 const connected = ref(false)
@@ -120,18 +129,52 @@ function progressClass(n: number): string {
 
 const successDone = ref(false)
 
+async function loadProductVersion(): Promise<void> {
+  try {
+    const build = await fetchProductVersion()
+    productVersion.value = build.version
+  } catch {
+    // Version metadata must never block access to the deployment workflow.
+  }
+}
+
+async function authenticateRemote(): Promise<void> {
+  const token = adminTokenInput.value.trim()
+  if (!token) {
+    authError.value = t('app.remote.access.token.required')
+    return
+  }
+
+  authBusy.value = true
+  authError.value = ''
+  setSessionToken(token)
+  try {
+    const session = await fetchSession()
+    if (!session.remote) throw new Error(t('app.remote.access.unexpected.local.session'))
+    await loadProductVersion()
+    remoteAuthRequired.value = false
+    adminTokenInput.value = ''
+  } catch (e) {
+    setSessionToken('')
+    authError.value = e instanceof ApiRequestError && e.status === 401
+      ? t('app.remote.access.token.invalid')
+      : (e as Error).message
+  } finally {
+    authBusy.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     const s = await fetchSession()
     if (s.token) setSessionToken(s.token)
-    try {
-      const build = await fetchProductVersion()
-      productVersion.value = build.version
-    } catch {
-      // Version metadata must never block access to the deployment workflow.
-    }
+    await loadProductVersion()
   } catch (e) {
-    bootError.value = (e as Error).message
+    if (e instanceof ApiRequestError && e.status === 401) {
+      remoteAuthRequired.value = true
+    } else {
+      bootError.value = (e as Error).message
+    }
   } finally {
     booting.value = false
   }
@@ -178,6 +221,30 @@ onMounted(async () => {
             <span>{{ t('app.preparing.this.configuration.session') }}</span>
           </div>
         </div>
+
+        <section v-else-if="remoteAuthRequired" class="panel remote-auth-panel">
+          <h2>{{ t('app.remote.access.requires.admin.token') }}</h2>
+          <p>{{ t('app.remote.access.enter.token.from.admin.token.file') }}</p>
+          <p v-if="plaintextRemote" class="remote-http-warning">{{ t('app.remote.http.warning') }}</p>
+          <form @submit.prevent="authenticateRemote">
+            <div class="field">
+              <label for="admin-token">{{ t('app.admin.token') }}</label>
+              <input
+                id="admin-token"
+                v-model="adminTokenInput"
+                class="fieldbox"
+                type="password"
+                autocomplete="current-password"
+                autofocus
+                :disabled="authBusy"
+              />
+            </div>
+            <p v-if="authError" class="error-text" role="alert">{{ authError }}</p>
+            <button class="btn primary" type="submit" :disabled="authBusy">
+              {{ authBusy ? t('connect.connecting') : t('app.connect.remote') }}
+            </button>
+          </form>
+        </section>
 
         <template v-else>
           <section :class="stepClass(1)">
